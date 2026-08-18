@@ -13,7 +13,7 @@ export default function NewProJectPage() {
 
   function handleCancel() {
     if (confirm('작성을 취소하시겠습니까?')) {
-      router.back();
+      router.push('/mainpage');
     }
   };
 
@@ -30,7 +30,14 @@ export default function NewProJectPage() {
       return;
     }
 
-    router.push('/newtemplatepage');
+    const projectdata = new URLSearchParams({
+      projectName,
+      description,
+      startDate,
+      endDate
+    }).toString();
+
+    router.push(`/newtemplatepage?${projectdata}`);
   };
 
 
