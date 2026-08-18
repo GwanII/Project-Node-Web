@@ -40,7 +40,7 @@ export default function LoginPage() {
 
     alert("로그인에 성공했습니다.");
     console.log(data);
-    router.push("/test");
+    router.push("/mainpage");
   };
 
   const handleGoogleLogin = async () => {

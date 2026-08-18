@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Flag, Trophy, BookOpen, Plus } from "lucide-react";
+import { supabase } from "@/src/lib/supabase";
 
 type Template = {
   id: string;
@@ -37,20 +38,49 @@ const TEMPLATE: Template[] = [
 
 export default function NewTemplatePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   function handleBack() {
     router.back();
   }
 
-  function handleSelect() {
-    if (!selectedId) {
-      alert('템플릿을 선택해 주세요.');
-      return;
-    }
+  async function handleSelect() {  
+    const projectName = searchParams.get('projectName') || '';
+    const description = searchParams.get('description') || '';
+    const startDate = searchParams.get('startDate') || null;
+    const endDate = searchParams.get('endDate') || null;
 
-    //router.push('다음 페이지');
+    try {
+      setIsSubmitting(true);
+
+      const { error } = await supabase
+      .from('projectdata')
+      .insert([
+        {
+          project_name: projectName,
+          description: description,
+          start_date: startDate || null, 
+          end_date: endDate || null,
+          selected_template: selectedId
+        }
+      ]);
+
+      if (error) {
+        alert('프로젝트 저장 실패: ' + (error as Error).message);
+        return;
+      }
+
+      alert('프로젝트가 성공적으로 생성되었습니다!');
+      router.push('/Projectmainpage');  
+    } catch (err) {
+      console.error(err);
+      alert('저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function getFilteredTemplate() {
@@ -250,15 +280,16 @@ export default function NewTemplatePage() {
             <button
               type="button"
               onClick={handleSelect}
+              disabled={!selectedId}
               style={{
                 padding: '12px 36px',
-                backgroundColor: '#2058EC',
+                backgroundColor: selectedId ? '#2058EC' : '#CCCCCC',
                 border: 'none',
                 borderRadius: '8px',
                 color: '#FFFFFF',
                 fontSize: '16px',
                 fontWeight: 'bold',
-                cursor: 'pointer'
+                cursor: selectedId ? 'pointer' : 'not-allowed'
               }}
             > 선택</button>
           </div>

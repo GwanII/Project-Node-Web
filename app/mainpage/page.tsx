@@ -118,6 +118,11 @@ export default function MainPage() {
   // 사용자 프로필 메뉴 열림/닫힘 상태
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
+  // 계정 변경(전환) 관련 상태
+  const [activeAccount, setActiveAccount] = useState("박성빈");
+  const [isAccountSwitchModalOpen, setIsAccountSwitchModalOpen] = useState(false);
+  const savedAccounts = ["박성빈", "김재호", "박기완"];
+
   // 외부 클릭 시 메뉴 닫기용 ref 및 useEffect
   const userMenuRef1 = useRef<HTMLDivElement>(null);
   const userMenuRef2 = useRef<HTMLDivElement>(null);
@@ -125,12 +130,10 @@ export default function MainPage() {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (
-        userMenuRef1.current &&
-        !userMenuRef1.current.contains(target) &&
-        userMenuRef2.current &&
-        !userMenuRef2.current.contains(target)
-      ) {
+      const isInsideMenu =
+        (userMenuRef1.current?.contains(target) ?? false) ||
+        (userMenuRef2.current?.contains(target) ?? false);
+      if (!isInsideMenu) {
         setIsUserMenuOpen(false);
       }
     };
@@ -188,14 +191,7 @@ export default function MainPage() {
   ]);
 
   // 모달 상태
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-
-  // 새 프로젝트 입력 필드
-  const [newTitle, setNewTitle] = useState("");
-  const [newLeader, setNewLeader] = useState("박성빈");
-  const [newMembers, setNewMembers] = useState(5);
-  const [newDeadline, setNewDeadline] = useState("2026.12.23");
 
   // 검색 및 정렬 결과 계산
   const filteredProjects = useMemo(() => {
@@ -243,32 +239,6 @@ export default function MainPage() {
     );
   };
 
-  // 프로젝트 생성 처리
-  const handleCreateProject = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    if (projects.length >= maxProjectsLimit) {
-      alert("최대 프로젝트 수(8개)에 도달하였습니다. 플랜 업그레이드가 필요합니다.");
-      setIsCreateModalOpen(false);
-      setIsUpgradeModalOpen(true);
-      return;
-    }
-
-    const newProject: Project = {
-      id: Date.now(),
-      title: newTitle,
-      leader: newLeader,
-      members: Number(newMembers),
-      deadline: newDeadline.replace(/-/g, "."),
-      dDay: "D-Day 30",
-    };
-
-    setProjects((prev) => [...prev, newProject]);
-    setNewTitle("");
-    setIsCreateModalOpen(false);
-  };
-
   return (
     <div className="relative w-full min-h-screen bg-white flex flex-row overflow-x-hidden font-sans antialiased text-gray-800">
       
@@ -280,9 +250,14 @@ export default function MainPage() {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => window.location.reload()}
-              className="text-2xl font-extrabold tracking-tight text-gray-900 leading-tight text-left cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+              className="cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
             >
-              프로젝트<br />로고
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo/cobalt-hub-logo.svg"
+                alt="Cobalt Hub"
+                className="h-9 w-auto"
+              />
             </button>
           </div>
           
@@ -291,12 +266,13 @@ export default function MainPage() {
             <div className="relative" ref={userMenuRef1}>
               <div className="flex items-center space-x-2 text-gray-700 text-sm font-medium">
                 <span>
-                  <span
-                    className="relative inline-block"
-                    onMouseEnter={() => setIsUserMenuOpen(true)}
-                    onMouseLeave={() => setIsUserMenuOpen(false)}
-                  >
-                    <strong className="text-blue-600 font-semibold cursor-pointer hover:underline">박성빈</strong>
+                  <span className="relative inline-block">
+                    <strong
+                      onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                      className="text-blue-600 font-semibold cursor-pointer hover:underline"
+                    >
+                      {activeAccount}
+                    </strong>
 
                     {/* 사용자 드롭다운 메뉴 */}
                     {isUserMenuOpen && (
@@ -316,8 +292,8 @@ export default function MainPage() {
 
                         <button
                           onClick={() => {
-                            alert("사용자 프로필 페이지로 이동합니다.");
                             setIsUserMenuOpen(false);
+                            router.push("/profile");
                           }}
                           className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
                         >
@@ -329,8 +305,8 @@ export default function MainPage() {
 
                         <button
                           onClick={() => {
-                            alert("계정 변경 페이지로 이동합니다.");
                             setIsUserMenuOpen(false);
+                            setIsAccountSwitchModalOpen(true);
                           }}
                           className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
                         >
@@ -441,7 +417,7 @@ export default function MainPage() {
             
             {/* [카드 0] 프로젝트 생성 카드 */}
             <button
-              onClick={() => setIsCreateModalOpen(true)}
+              onClick={() => router.push("/newprojectpage")}
               className="group border-2 border-[#8CA5FF] rounded-2xl p-5 flex flex-col items-center justify-center min-h-[220px] bg-white hover:bg-blue-50/40 hover:border-blue-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
             >
               <div className="w-14 h-14 rounded-full border-2 border-[#8CA5FF] group-hover:border-blue-500 flex items-center justify-center mb-3 text-[#8CA5FF] group-hover:text-blue-500 transition-colors">
@@ -565,7 +541,7 @@ export default function MainPage() {
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
               className="flex items-center space-x-2 text-gray-800 text-sm font-medium hover:text-blue-600 focus:outline-none transition-colors cursor-pointer"
             >
-              <span><strong className="text-blue-600 font-semibold">박성빈</strong>님 환영합니다</span>
+              <span><strong className="text-blue-600 font-semibold">{activeAccount}</strong>님 환영합니다</span>
               <div className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center text-gray-500 bg-white shadow-sm hover:border-blue-400">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
@@ -591,8 +567,8 @@ export default function MainPage() {
 
                 <button
                   onClick={() => {
-                    alert("사용자 프로필 페이지로 이동합니다.");
                     setIsUserMenuOpen(false);
+                    router.push("/profile");
                   }}
                   className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
                 >
@@ -604,8 +580,8 @@ export default function MainPage() {
 
                 <button
                   onClick={() => {
-                    alert("계정 변경 페이지로 이동합니다.");
                     setIsUserMenuOpen(false);
+                    setIsAccountSwitchModalOpen(true);
                   }}
                   className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
                 >
@@ -783,106 +759,170 @@ export default function MainPage() {
         </div>
       </aside>
 
-      {/* 프로젝트 생성 모달 */}
-      {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">새 프로젝트 생성</h2>
-            <form onSubmit={handleCreateProject} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">프로젝트명</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="예: 프로젝트 NODE"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">팀장 이름</label>
-                  <input
-                    type="text"
-                    required
-                    value={newLeader}
-                    onChange={(e) => setNewLeader(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
+      {/* 플랜 업그레이드 모달 */}
+      {isUpgradeModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 md:p-8 w-full max-w-3xl shadow-2xl border border-gray-100">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-xl font-bold text-gray-900">플랜 업그레이드</h3>
+              <button
+                onClick={() => setIsUpgradeModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              더 많은 프로젝트와 기능이 필요하다면 나에게 맞는 플랜으로 업그레이드하세요.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {/* 기본 플랜 (현재 이용 중) */}
+              <div className="rounded-2xl border-2 border-gray-200 p-5 flex flex-col">
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="text-lg font-bold text-gray-900">기본 플랜</h4>
+                  <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                    현재 플랜
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">팀원 수</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={newMembers}
-                    onChange={(e) => setNewMembers(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">마감일</label>
-                <input
-                  type="date"
-                  required
-                  value={newDeadline}
-                  onChange={(e) => setNewDeadline(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-              <div className="flex justify-end space-x-2 pt-3">
+                <p className="text-2xl font-extrabold text-gray-900 mb-4">무료</p>
+                <ul className="space-y-2 text-sm text-gray-600 flex-1">
+                  {["프로젝트 최대 8개 생성", "팀원 최대 5명 초대", "기본 통계 제공"].map((feature) => (
+                    <li key={feature} className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
                 <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-colors"
+                  disabled
+                  className="mt-4 w-full py-2.5 bg-gray-100 text-gray-400 text-sm font-semibold rounded-xl cursor-not-allowed"
                 >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors shadow-md"
-                >
-                  생성하기
+                  이용 중
                 </button>
               </div>
-            </form>
+
+              {/* 프리미엄 플랜 */}
+              <div className="relative rounded-2xl border-2 border-[#8CA5FF] bg-blue-50/40 p-5 flex flex-col overflow-hidden">
+                <span className="absolute top-0 right-0 bg-[#8CA5FF] text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl">
+                  추천
+                </span>
+                <h4 className="text-lg font-bold text-gray-900 mb-1">프리미엄 플랜</h4>
+                <p className="text-2xl font-extrabold text-gray-900 mb-4">
+                  ₩9,900<span className="text-sm font-medium text-gray-500"> / 월</span>
+                </p>
+                <ul className="space-y-2 text-sm text-gray-700 flex-1">
+                  {["프로젝트 무제한 생성", "팀원 무제한 초대", "고급 통계 및 리포트", "우선 고객 지원"].map((feature) => (
+                    <li key={feature} className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-blue-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => {
+                    setIsUpgradeModalOpen(false);
+                    router.push("/payment?plan=premium");
+                  }}
+                  className="mt-4 w-full py-2.5 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl transition-colors shadow-md"
+                >
+                  업그레이드하기
+                </button>
+              </div>
+
+              {/* Pro 플랜 */}
+              <div className="relative rounded-2xl border-2 border-gray-900 p-5 flex flex-col overflow-hidden">
+                <span className="absolute top-0 right-0 bg-gray-900 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl">
+                  PRO
+                </span>
+                <h4 className="text-lg font-bold text-gray-900 mb-1">프로 플랜</h4>
+                <p className="text-2xl font-extrabold text-gray-900 mb-4">
+                  ₩19,900<span className="text-sm font-medium text-gray-500"> / 월</span>
+                </p>
+                <ul className="space-y-2 text-sm text-gray-700 flex-1">
+                  {["프리미엄 기능 모두 포함", "전담 매니저 배정", "API 연동 지원", "맞춤형 보안 설정"].map((feature) => (
+                    <li key={feature} className="flex items-center gap-2">
+                      <svg className="w-4 h-4 text-gray-900 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  onClick={() => {
+                    setIsUpgradeModalOpen(false);
+                    router.push("/payment?plan=pro");
+                  }}
+                  className="mt-4 w-full py-2.5 bg-gray-900 hover:bg-gray-800 text-white text-sm font-semibold rounded-xl transition-colors shadow-md"
+                >
+                  업그레이드하기
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
-      {/* 플랜 업그레이드 안내 모달 */}
-      {isUpgradeModalOpen && (
+      {/* 계정 변경 모달 */}
+      {isAccountSwitchModalOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm text-center shadow-2xl border border-gray-100">
-            <div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-gray-900 mb-2">플랜 업그레이드 필요</h3>
-            <p className="text-sm text-gray-600 mb-6">
-              기본 플랜에서는 최대 8개의 프로젝트까지 생성이 가능합니다. 더 많은 프로젝트를 개설하려면 프리미엄 플랜으로 업그레이드하세요!
-            </p>
-            <div className="flex gap-2">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900">계정 변경</h3>
               <button
-                onClick={() => setIsUpgradeModalOpen(false)}
-                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-colors"
+                onClick={() => setIsAccountSwitchModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500"
               >
-                닫기
-              </button>
-              <button
-                onClick={() => {
-                  alert("프리미엄 결제 페이지로 이동합니다.");
-                  setIsUpgradeModalOpen(false);
-                }}
-                className="flex-1 py-2.5 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors shadow-md"
-              >
-                업그레이드
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
             </div>
+            <p className="text-sm text-gray-600 mb-4">전환할 계정을 선택하세요.</p>
+            <div className="space-y-2">
+              {savedAccounts.map((account) => (
+                <button
+                  key={account}
+                  onClick={() => {
+                    setActiveAccount(account);
+                    setIsAccountSwitchModalOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl border text-sm font-semibold transition-colors ${
+                    account === activeAccount
+                      ? "border-blue-500 bg-blue-50 text-blue-600"
+                      : "border-gray-200 hover:bg-gray-50 text-gray-800"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="w-8 h-8 rounded-full bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-500">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                      </svg>
+                    </span>
+                    {account}
+                  </span>
+                  {account === activeAccount && (
+                    <span className="text-xs font-bold text-blue-600">사용 중</span>
+                  )}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                setIsAccountSwitchModalOpen(false);
+                router.push("/login");
+              }}
+              className="w-full mt-4 py-2.5 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-xl transition-colors shadow-md"
+            >
+              다른 계정으로 로그인
+            </button>
           </div>
         </div>
       )}
