@@ -1,12 +1,16 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+
+const USER_KEY = "sohee"; // 나중에 auth로 교체
 
 const COLOR = {
-  main: "#1F9D63",
-  light: "#57C77E",
-  mainBg: "#EDFAF3",
+  main: "#8E9BFF",      // 배너/플로팅 탭 배경 — 기본 메인
+  point: "#7388FF",     // D-Day 뱃지 — 포인트 진한 보라
+  border: "#A5B8FF",    // 카드 테두리/검색창 라인
+  mainBg: "#EEF2FF",    // 연한 배경
   danger: "#EF4444",
   gray50: "#F9FAFB",
   gray100: "#F3F4F6",
@@ -38,7 +42,7 @@ const PERFORMANCE = [
   { label: "문서 정리", pct: 70 },
 ];
 
-function ProgressBar({ pct, color = COLOR.light }: { pct: number; color?: string }) {
+function ProgressBar({ pct, color = COLOR.point }: { pct: number; color?: string }) {
   return (
     <div style={{ height: 8, background: COLOR.gray100, borderRadius: 999, overflow: "hidden" }}>
       <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 999, transition: "width 0.6s ease" }} />
@@ -48,7 +52,7 @@ function ProgressBar({ pct, color = COLOR.light }: { pct: number; color?: string
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{ background: COLOR.white, borderRadius: 16, border: `1px solid ${COLOR.gray200}`, padding: "18px 20px", ...style }}>
+    <div style={{ background: COLOR.white, borderRadius: 16, border: `1px solid ${COLOR.border}`, padding: "18px 20px", ...style }}>
       {children}
     </div>
   );
@@ -130,13 +134,57 @@ export default function ProfilePage() {
   const [email, setEmail] = useState("sohee@naver.com");
   const [userId, setUserId] = useState("soheekw");
   const [profileImg, setProfileImg] = useState<string | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
   const imgInputRef = useRef<HTMLInputElement>(null);
 
-  const handleProfileImg = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── DB에서 개인정보 불러오기 ──
+  const fetchProfile = useCallback(async () => {
+    const { data } = await supabase
+      .from("user_profiles")
+      .select("*")
+      .eq("user_key", USER_KEY)
+      .maybeSingle();
+    if (data) {
+      setName(data.name ?? "권소희");
+      setEmail(data.email ?? "sohee@naver.com");
+      setUserId(data.user_id ?? "soheekw");
+      setKakaoOn(data.kakao_notify ?? true);
+      setProfileImg(data.avatar_url ?? null);
+    }
+    setProfileLoading(false);
+  }, []);
+
+  useEffect(() => { fetchProfile(); }, [fetchProfile]);
+
+  // ── 저장하기 ──
+  const handleSave = async () => {
+    const { error } = await supabase.from("user_profiles").upsert({
+      user_key: USER_KEY,
+      name, email, user_id: userId,
+      kakao_notify: kakaoOn,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_key" });
+    if (error) {
+      console.error("저장 실패:", error);
+      alert("저장 실패: " + error.message);
+      return;
+    }
+    alert("저장됐어요!");
+    setShowEdit(false);
+  };
+
+  // ── 프로필 사진 변경 ──
+  const handleProfileImg = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const url = URL.createObjectURL(f);
-    setProfileImg(url);
+    const path = `avatars/${USER_KEY}_${Date.now()}.${f.name.split(".").pop()}`;
+    const { error } = await supabase.storage.from("cobalt-files").upload(path, f, { upsert: true });
+    if (error) { alert("사진 업로드 실패"); return; }
+    const { data: { publicUrl } } = supabase.storage.from("cobalt-files").getPublicUrl(path);
+    setProfileImg(publicUrl);
+    await supabase.from("user_profiles").upsert({
+      user_key: USER_KEY, avatar_url: publicUrl, updated_at: new Date().toISOString(),
+    }, { onConflict: "user_key" });
     e.target.value = "";
   };
 
@@ -155,9 +203,9 @@ export default function ProfilePage() {
     <div style={{ minHeight: "100vh", background: COLOR.gray50, fontFamily: "'Pretendard', 'Apple SD Gothic Neo', sans-serif", color: COLOR.gray800 }}>
 
       {/* 헤더 */}
-      <div style={{ background: COLOR.white, borderBottom: `1px solid ${COLOR.gray200}`, padding: "0 24px", display: "flex", alignItems: "center", height: 56 }}>
-        <span style={{ fontWeight: 700, fontSize: 18, color: COLOR.main, letterSpacing: "-0.5px" }}>TACT</span>
-        <span style={{ color: COLOR.gray400, fontSize: 14, marginLeft: "auto" }}>개인 정보</span>
+      <div style={{ background: COLOR.main, padding: "0 24px", display: "flex", alignItems: "center", height: 56 }}>
+        <span style={{ fontWeight: 700, fontSize: 18, color: COLOR.white, letterSpacing: "-0.5px" }}>Cobalt Hub</span>
+        <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 14, marginLeft: "auto" }}>개인 정보</span>
       </div>
 
       <div style={{ padding: "28px 32px", display: "flex", flexDirection: "column", gap: 16 }}>
@@ -166,12 +214,12 @@ export default function ProfilePage() {
           {/* 프로필 */}
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <div style={{ width: 60, height: 60, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: COLOR.main, flexShrink: 0, overflow: "hidden" }}>
+              <div style={{ width: 60, height: 60, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: COLOR.point, flexShrink: 0, overflow: "hidden" }}>
               {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "소희"}
             </div>
               <div style={{ flex: 1 }}>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 18 }}>{name}</p>
-                <Link href="/mainpage" style={{ margin: "4px 0 0", fontSize: 13, color: COLOR.main, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
+                <Link href="/mainpage" style={{ margin: "4px 0 0", fontSize: 13, color: COLOR.point, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
                   참여 중인 프로젝트 {PROJECTS.length}개 <span style={{ fontSize: 12 }}>›</span>
                 </Link>
               </div>
@@ -186,13 +234,13 @@ export default function ProfilePage() {
               <span style={{ fontSize: 13, color: COLOR.gray600 }}>할 일 {doneCnt}/{todos.length}</span>
             </div>
             <ProgressBar pct={pct} />
-            <p style={{ margin: "10px 0 0", fontSize: 28, fontWeight: 700, color: COLOR.main, textAlign: "right" }}>{pct}%</p>
+            <p style={{ margin: "10px 0 0", fontSize: 28, fontWeight: 700, color: COLOR.point, textAlign: "right" }}>{pct}%</p>
           </Card>
 
           {/* 할 일 */}
           <Card>
             <p style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>내 할일(To-Do)</p>
-            <p style={{ margin: "0 0 12px", fontSize: 12, color: COLOR.main, fontWeight: 600, background: COLOR.mainBg, display: "inline-block", padding: "4px 12px", borderRadius: 6 }}>
+            <p style={{ margin: "0 0 12px", fontSize: 12, color: COLOR.point, fontWeight: 600, background: COLOR.mainBg, display: "inline-block", padding: "4px 12px", borderRadius: 6 }}>
               📅 이번주(8/10~8/12)에 할 일
             </p>
             {pendingTodos.length > 0 && (
@@ -209,7 +257,7 @@ export default function ProfilePage() {
                   {visibleDone.map((t) => <TodoRow key={t.id} todo={t} onToggle={() => toggleTodo(t.id)} />)}
                 </div>
                 {doneTodos.length > 2 && (
-                  <button onClick={() => setShowAll(!showAll)} style={{ marginTop: 12, background: "none", border: "none", color: COLOR.main, fontSize: 13, cursor: "pointer", padding: 0 }}>
+                  <button onClick={() => setShowAll(!showAll)} style={{ marginTop: 12, background: "none", border: "none", color: COLOR.point, fontSize: 13, cursor: "pointer", padding: 0 }}>
                     {showAll ? "접기 ▲" : `완료된 항목 ${doneTodos.length - 2}개 더보기 ▼`}
                   </button>
                 )}
@@ -218,16 +266,16 @@ export default function ProfilePage() {
           </Card>
 
           {/* AI 리포트 */}
-          <Card style={{ background: COLOR.mainBg, border: `1px solid ${COLOR.light}` }}>
-            <p style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600, color: COLOR.main }}>✦ AI 성과 리포트</p>
-            <p style={{ margin: "0 0 14px", fontSize: 13, color: COLOR.main }}>프로젝트를 선택하면 회의록·완료 할 일·기여도를 종합해 성과 카드를 자동 생성합니다.</p>
+          <Card style={{ background: COLOR.mainBg, border: `1px solid ${COLOR.border}` }}>
+            <p style={{ margin: "0 0 6px", fontSize: 15, fontWeight: 600, color: COLOR.point }}>✦ AI 성과 리포트</p>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: COLOR.point }}>프로젝트를 선택하면 회의록·완료 할 일·기여도를 종합해 성과 카드를 자동 생성합니다.</p>
             <div style={{ position: "relative", marginBottom: 12 }}>
-              <button onClick={() => setShowProjectPicker(!showProjectPicker)} style={{ width: "100%", background: COLOR.white, border: `1px solid ${COLOR.light}`, borderRadius: 10, padding: "11px 14px", fontSize: 14, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", color: COLOR.gray800 }}>
+              <button onClick={() => setShowProjectPicker(!showProjectPicker)} style={{ width: "100%", background: COLOR.white, border: `1px solid ${COLOR.border}`, borderRadius: 10, padding: "11px 14px", fontSize: 14, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", color: COLOR.gray800 }}>
                 <span>📁 {selectedProject.name}</span>
                 <span style={{ color: COLOR.gray400 }}>{showProjectPicker ? "▲" : "▼"}</span>
               </button>
               {showProjectPicker && (
-                <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: COLOR.white, border: `1px solid ${COLOR.gray200}`, borderRadius: 10, zIndex: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: "110%", left: 0, right: 0, background: COLOR.white, border: `1px solid ${COLOR.border}`, borderRadius: 10, zIndex: 20, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", overflow: "hidden" }}>
                   {PROJECTS.map((p) => (
                     <button key={p.id} onClick={() => { setSelectedProject(p); setShowProjectPicker(false); }} style={{ display: "block", width: "100%", padding: "11px 14px", background: selectedProject.id === p.id ? COLOR.mainBg : COLOR.white, border: "none", fontSize: 14, cursor: "pointer", textAlign: "left", color: selectedProject.id === p.id ? COLOR.main : COLOR.gray800, fontWeight: selectedProject.id === p.id ? 600 : 400 }}>
                       📁 {p.name} <span style={{ fontSize: 12, color: COLOR.gray400, marginLeft: 8 }}>{p.period}</span>
@@ -236,7 +284,7 @@ export default function ProfilePage() {
                 </div>
               )}
             </div>
-            <button onClick={() => setShowReport(true)} style={{ width: "100%", background: COLOR.main, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
+            <button onClick={() => setShowReport(true)} style={{ width: "100%", background: COLOR.point, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>
               {selectedProject.name} 리포트 생성하기
             </button>
           </Card>
@@ -248,12 +296,12 @@ export default function ProfilePage() {
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 16 }} onClick={() => setShowReport(false)}>
           <div style={{ background: COLOR.white, borderRadius: 20, padding: 24, maxWidth: 520, width: "100%", maxHeight: "90vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 16 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 14, color: COLOR.main }}>소희</div>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 14, color: COLOR.point }}>소희</div>
               <div style={{ flex: 1 }}>
                 <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{name} · UI 디자인 파트</p>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: COLOR.gray600 }}>{selectedProject.name} · {selectedProject.period}</p>
               </div>
-              <span style={{ fontSize: 12, color: COLOR.main, background: COLOR.mainBg, padding: "4px 10px", borderRadius: 6 }}>✦ AI 생성</span>
+              <span style={{ fontSize: 12, color: COLOR.point, background: COLOR.mainBg, padding: "4px 10px", borderRadius: 6 }}>✦ AI 생성</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginBottom: 16 }}>
               {[["기여도", `${pct}%`, COLOR.main], ["완료 할 일", doneCnt, COLOR.gray800], ["참여 회의", 8, COLOR.gray800], ["담당 화면", 5, COLOR.gray800]].map(([label, val, color]) => (
@@ -276,14 +324,14 @@ export default function ProfilePage() {
               <p style={{ margin: "0 0 12px", fontSize: 14, fontWeight: 600 }}>핵심 성과</p>
               {["로그인·회원가입·개인정보·자료보관함 등 5개 화면 UI 전담 설계", "팀 공용 색상·컴포넌트 시스템 정립으로 전체 화면 통일감 확보", "할 일 마감 준수율 90% 유지, 3회 회의록 정리 담당"].map((text) => (
                 <div key={text} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                  <span style={{ color: COLOR.main, flexShrink: 0 }}>✓</span>
+                  <span style={{ color: COLOR.point, flexShrink: 0 }}>✓</span>
                   <span style={{ fontSize: 13, lineHeight: 1.5 }}>{text}</span>
                 </div>
               ))}
             </div>
-            <div style={{ background: COLOR.mainBg, border: `1px solid ${COLOR.light}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
-              <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: COLOR.main }}>❝ 자소서 추천 문장</p>
-              <p style={{ margin: 0, fontSize: 13, color: COLOR.main, lineHeight: 1.7 }}>
+            <div style={{ background: COLOR.mainBg, border: `1px solid ${COLOR.border}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: COLOR.point }}>❝ 자소서 추천 문장</p>
+              <p style={{ margin: 0, fontSize: 13, color: COLOR.point, lineHeight: 1.7 }}>
                 "8주간 진행된 {selectedProject.name}에서 UI 디자인을 총괄하여 5개 핵심 화면을 설계했습니다. 팀원 간 화면 스타일이 제각각이던 문제를 공용 디자인 시스템 구축으로 해결해 협업 효율을 높였고, 할 일 마감 준수율 90%를 유지하며 일정 관리와 책임감을 입증했습니다."
               </p>
             </div>
@@ -300,11 +348,11 @@ export default function ProfilePage() {
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
               {["#UIUX", "#Figma", "#디자인시스템", "#협업", "#일정관리"].map((tag) => (
-                <span key={tag} style={{ fontSize: 12, color: COLOR.gray600, background: COLOR.gray100, border: `1px solid ${COLOR.gray200}`, padding: "4px 10px", borderRadius: 999 }}>{tag}</span>
+                <span key={tag} style={{ fontSize: 12, color: COLOR.gray600, background: COLOR.gray100, border: `1px solid ${COLOR.border}`, padding: "4px 10px", borderRadius: 999 }}>{tag}</span>
               ))}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button style={{ flex: 1, background: COLOR.main, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>PDF로 저장</button>
+              <button style={{ flex: 1, background: COLOR.point, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>PDF로 저장</button>
               <button style={{ flex: 1, background: COLOR.gray100, color: COLOR.gray800, border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>문장 복사</button>
               <button onClick={() => setShowReport(false)} style={{ flex: 1, background: COLOR.gray100, color: COLOR.gray600, border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, cursor: "pointer" }}>닫기</button>
             </div>
@@ -321,7 +369,7 @@ export default function ProfilePage() {
               <p style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>개인 정보 수정</p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: 18, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 18 }}>
-              <div style={{ width: 52, height: 52, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, color: COLOR.main, overflow: "hidden", flexShrink: 0 }}>
+              <div style={{ width: 52, height: 52, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, color: COLOR.point, overflow: "hidden", flexShrink: 0 }}>
                 {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : "소희"}
               </div>
               <button
@@ -354,7 +402,7 @@ export default function ProfilePage() {
               </div>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setShowEdit(false)} style={{ flex: 2, background: COLOR.main, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>저장하기</button>
+              <button onClick={handleSave} style={{ flex: 2, background: COLOR.point, color: "#fff", border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer" }}>저장하기</button>
               <button onClick={() => setShowEdit(false)} style={{ flex: 1, background: COLOR.gray100, color: COLOR.gray600, border: "none", borderRadius: 10, padding: "12px 0", fontSize: 14, cursor: "pointer" }}>취소</button>
             </div>
           </div>
