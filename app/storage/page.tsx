@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { supabase } from "@/lib/supabase";
+import Link from "next/link";
+import { supabase } from "@/src/lib/supabase";
 
 const COLOR = {
   main: "#8E9BFF",
@@ -18,11 +19,11 @@ const COLOR = {
   white: "#FFFFFF",
 };
 
-type FileType = "전체" | "사진" | "URL" | "문서";
+type FileType = "전체" | "image" | "url" | "document";
 type SortType = "날짜순" | "가나다순";
 type FolderRow = { id: string; name: string; created_at: string };
 type FileRow = {
-  id: string; name: string; type: "사진" | "URL" | "문서";
+  id: string; name: string; type: "image" | "url" | "document";
   uploader: string; size?: string; url?: string;
   storage_path?: string; folder_id?: string | null; created_at: string;
 };
@@ -33,13 +34,18 @@ const MEETING_DATA: Record<string, string[]> = {
   "AI 공모전":     ["1차 회의록","2차 회의록"],
 };
 const PROJECT_NAMES = Object.keys(MEETING_DATA);
-const TYPE_ICON: Record<string, string> = { 사진:"🖼", URL:"🔗", 문서:"📄" };
-const USER_KEY = "sohee";
+const TYPE_ICON:  Record<string, string> = { image:"🖼", url:"🔗", document:"📄" };
+const TYPE_LABEL: Record<string, string> = { image:"사진", url:"URL", document:"문서" };
+async function getCurrentUserId(): Promise<string> {
+  const { data: { user } } = await supabase.auth.getUser();
+  return user?.id ?? "guest";
+}
 
 export default function StoragePage() {
   const [files, setFiles]                     = useState<FileRow[]>([]);
   const [folders, setFolders]                 = useState<FolderRow[]>([]);
   const [uploaderName, setUploaderName]       = useState("권소희");
+  const [uploaderId, setUploaderId]           = useState("soheekw");
   const [loading, setLoading]                 = useState(true);
   const [tab, setTab]                         = useState<FileType>("전체");
   const [sort, setSort]                       = useState<SortType>("날짜순");
@@ -76,14 +82,17 @@ export default function StoragePage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
+    const userId = await getCurrentUserId();
+    setUploaderId(userId);
     const [{ data: foldersData }, { data: filesData }, { data: profileData }] = await Promise.all([
       supabase.from("folders").select("*").order("created_at", { ascending: false }),
       supabase.from("files").select("*").order("created_at", { ascending: false }),
-      supabase.from("user_profiles").select("name").eq("user_key", USER_KEY).maybeSingle(),
+      supabase.from("profiles").select("name, nickname").eq("id", userId).maybeSingle(),
     ]);
     setFolders((foldersData as FolderRow[]) ?? []);
     setFiles((filesData as FileRow[]) ?? []);
-    if (profileData?.name) setUploaderName(profileData.name);
+    if (profileData?.nickname) setUploaderName(profileData.nickname);
+    if (profileData?.nickname) setUploaderId(profileData.nickname);
     setLoading(false);
     setSelected(new Set());
   }, []);
@@ -96,24 +105,24 @@ export default function StoragePage() {
     if (!f) return;
     setUploading(true); setShowUploadMenu(false);
     const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
-    const type: "사진"|"URL"|"문서" = ["png","jpg","jpeg","gif","webp"].includes(ext) ? "사진" : "문서";
+    const type: "image"|"url"|"document" = ["png","jpg","jpeg","gif","webp"].includes(ext) ? "image" : "document";
     const size = f.size > 1024*1024 ? `${(f.size/1024/1024).toFixed(1)} MB` : `${Math.round(f.size/1024)} KB`;
     const safeFileName = `${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
     const { error } = await supabase.storage.from("cobalt-files").upload(safeFileName, f);
     if (error) { alert("업로드 실패: " + error.message); setUploading(false); return; }
-    await supabase.from("files").insert({ name: f.name, type, uploader: uploaderName, size, storage_path: safeFileName, folder_id: currentFolder?.id ?? null });
+    await supabase.from("files").insert({ name: f.name, type, uploader: uploaderId, size, storage_path: safeFileName, folder_id: currentFolder?.id ?? null });
     await fetchAll(); setUploading(false); e.target.value = "";
   };
 
   const handleMeetingSelect = async (meeting: string) => {
     const name = `[${meetingProject}] ${meeting}.txt`;
-    await supabase.from("files").insert({ name, type: "문서", uploader: uploaderName, size: "12 KB", folder_id: currentFolder?.id ?? null });
+    await supabase.from("files").insert({ name, type: "document", uploader: uploaderId, size: "12 KB", folder_id: currentFolder?.id ?? null });
     await fetchAll(); setMeetingStep(null); setMeetingProject("");
   };
 
   const handleAddUrl = async () => {
     if (!urlInput.trim()) return;
-    await supabase.from("files").insert({ name: urlName.trim() || urlInput, type: "URL", uploader: uploaderName, url: urlInput, folder_id: currentFolder?.id ?? null });
+    await supabase.from("files").insert({ name: urlName.trim() || urlInput, type: "url", uploader: uploaderId, url: urlInput, folder_id: currentFolder?.id ?? null });
     await fetchAll(); setUrlInput(""); setUrlName(""); setShowUrlInput(false);
   };
 
@@ -191,8 +200,7 @@ export default function StoragePage() {
 
   const visibleFiles = files
     .filter(f => currentFolder ? f.folder_id === currentFolder.id : true)
-    .filter(f => tab === "전체" || f.type === tab)
-    .filter(f => f.name.toLowerCase().includes(search.toLowerCase()))
+    .filter(f => tab === "전체" || f.type === tab)    .filter(f => f.name.toLowerCase().includes(search.toLowerCase()))
     .sort((a,b) => sort === "가나다순" ? a.name.localeCompare(b.name,"ko") : new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const BtnStyle = (active?: boolean): React.CSSProperties => ({
@@ -206,7 +214,7 @@ export default function StoragePage() {
   return (
     <div style={{ minHeight:"100vh", background:COLOR.gray50, fontFamily:"'Pretendard','Apple SD Gothic Neo',sans-serif", color:COLOR.gray800 }}>
       <div style={{ background:COLOR.main, padding:"0 24px", display:"flex", alignItems:"center", height:56 }}>
-        <span style={{ fontWeight:700, fontSize:18, color:COLOR.white, letterSpacing:"-0.5px" }}>Cobalt Hub</span>
+        <Link href="/mainpage" style={{ fontWeight:700, fontSize:18, color:COLOR.white, letterSpacing:"-0.5px", textDecoration:"none" }}>Cobalt Hub</Link>
         <span style={{ color:"rgba(255,255,255,0.8)", fontSize:14, marginLeft:"auto" }}>자료 보관함</span>
       </div>
 
@@ -366,7 +374,11 @@ export default function StoragePage() {
         {/* 탭 + 정렬 */}
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
           <div style={{ display:"flex", gap:6 }}>
-            {(["전체","사진","URL","문서"] as FileType[]).map(t => <button key={t} onClick={() => setTab(t)} style={BtnStyle(tab===t)}>{t}</button>)}
+            {(["전체", "image", "url", "document"] as FileType[]).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={BtnStyle(tab===t)}>
+                {t === "전체" ? "전체" : TYPE_LABEL[t]}
+              </button>
+            ))}
           </div>
           <div style={{ position:"relative" }}>
             <button onClick={() => setShowSortMenu(v => !v)} style={{ display:"flex", alignItems:"center", gap:6, background:COLOR.white, border:`1px solid ${COLOR.border}`, borderRadius:8, padding:"7px 12px", fontSize:13, cursor:"pointer", color:COLOR.gray600 }}>↕ {sort} ▾</button>
@@ -412,13 +424,13 @@ export default function StoragePage() {
                 {/* 체크박스 */}
                 <input type="checkbox" checked={selected.has(file.id)} onChange={() => toggleSelect(file.id)} style={{ width:16, height:16, cursor:"pointer", flexShrink:0, accentColor:COLOR.point }} />
 
-                <div style={{ width:40, height:40, borderRadius:10, background:file.type==="사진"?"#EFF6FF":file.type==="URL"?COLOR.mainBg:"#FEF2F2", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>
+                <div style={{ width:40, height:40, borderRadius:10, background:file.type==="image"?"#EFF6FF":file.type==="url"?COLOR.mainBg:"#FEF2F2", display:"flex", alignItems:"center", justifyContent:"center", fontSize:20, flexShrink:0 }}>
                   {TYPE_ICON[file.type]}
                 </div>
                 <div style={{ flex:1, minWidth:0 }}>
                   <p style={{ margin:0, fontSize:14, fontWeight:500, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{file.name}</p>
                   <p style={{ margin:"2px 0 0", fontSize:12, color:COLOR.gray400 }}>
-                    {file.type} · {file.uploader} · {formatDate(file.created_at)}{file.size && ` · ${file.size}`}
+                    {TYPE_LABEL[file.type]} · {file.uploader} · {formatDate(file.created_at)}{file.size && ` · ${file.size}`}
                     {file.folder_id && <span style={{ marginLeft:6, color:COLOR.point }}>📁 {folders.find(f=>f.id===file.folder_id)?.name}</span>}
                   </p>
                 </div>
@@ -427,7 +439,7 @@ export default function StoragePage() {
                     <button onClick={() => setMovingFile(file)} style={{ background:COLOR.mainBg, border:"none", borderRadius:8, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:16, color:COLOR.point }} title="폴더로 이동">📂</button>
                   )}
                   <button onClick={() => handleDelete(file)} style={{ background:COLOR.gray100, border:"none", borderRadius:8, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:16, color:COLOR.danger }}>🗑</button>
-                  {file.type==="URL" ? (
+                  {file.type==="url" ? (
                     <button onClick={() => file.url && window.open(file.url,"_blank")} style={{ background:COLOR.mainBg, border:"none", borderRadius:8, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:16, color:COLOR.point }}>↗</button>
                   ) : (
                     <button onClick={() => handleDownload(file)} disabled={!file.storage_path} style={{ background:file.storage_path?COLOR.mainBg:COLOR.gray100, border:"none", borderRadius:8, width:34, height:34, display:"flex", alignItems:"center", justifyContent:"center", cursor:file.storage_path?"pointer":"default", fontSize:16, color:file.storage_path?COLOR.point:COLOR.gray400 }}>↓</button>
