@@ -2,6 +2,7 @@
 
 import { useState, ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { Search, Flag, Trophy, BookOpen, Plus } from "lucide-react";
 import { supabase } from "@/src/lib/supabase";
 
@@ -9,6 +10,7 @@ type Template = {
   id: string;
   title: string;
   icon: ReactNode;
+  imageSrc?: string;
   isBlank?: boolean;
 }
 
@@ -16,17 +18,20 @@ const TEMPLATE: Template[] = [
   {
     id: 'univ-team',
     title: '대학 팀 프로젝트',
-    icon: <Flag size={18}/>
+    icon: <Flag size={18}/>,
+    imageSrc: '/template/univ-team.svg'
   },
   {
     id: 'contest',
     title: '공모전 / 대회',
-    icon: <Trophy size={18}/>
+    icon: <Trophy size={18}/>,
+    imageSrc: '/template/contest.svg'
   },
   {
     id: 'research',
     title: '연구 / 논문 프로젝트',
-    icon: <BookOpen size={18}/>
+    icon: <BookOpen size={18}/>,
+    imageSrc: '/template/research.svg'
   },
   {
     id: 'empty',
@@ -56,6 +61,23 @@ export default function NewTemplatePage() {
     try {
       setIsSubmitting(true);
 
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        alert('로그인이 필요합니다.');
+        return;
+      }
+
+      const { data: userData, error: userError } = await supabase
+        .from('profiles')
+        .select('name, email')
+        .eq('id', user.id)
+        .single();
+
+      if (userError) {
+        console.error('유저 정보 조회 실패:', userError);
+      }
+
       const { error } = await supabase
       .from('projectdata')
       .insert([
@@ -64,7 +86,10 @@ export default function NewTemplatePage() {
           description: description,
           start_date: startDate || null, 
           end_date: endDate || null,
-          selected_template: selectedId
+          selected_template: selectedId,
+          user_id: user.id,
+          user_name: userData?.name || '알 수 없음',
+          user_email: userData?.email || user.email
         }
       ]);
 
@@ -211,20 +236,26 @@ export default function NewTemplatePage() {
                       transition: 'border 0.2s ease'
                     }}
                   >
-                    {/* 예시 이미지 영역 */}
+                    {/* SVG 이미지 영역 */}
                     <div
                       style={{
                         flex: 1,
-                        backgroundColor: '#FFFFFF',
+                        position: 'relative',
+                        backgroundColor: '#F8F9FA',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: '#000000',
-                        fontSize: '18px',
-                        fontWeight: 'bold'
+                        overflow: 'hidden'
                       }}
                     >
-                      예시 이미지
+                      {item.imageSrc && (
+                        <Image
+                          src={item.imageSrc}
+                          alt={item.title}
+                          fill
+                          style={{ objectFit: 'contain' }}
+                        />
+                      )}
                     </div>
 
                     {/* 하단 타이틀 영역 */}
