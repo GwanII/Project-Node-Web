@@ -1,13 +1,16 @@
 'use client';
 
 import { useState, ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import Image from "next/image";
 import { Search, Flag, Trophy, BookOpen, Plus } from "lucide-react";
+import { supabase } from "@/src/lib/supabase";
 
 type Template = {
   id: string;
   title: string;
   icon: ReactNode;
+  imageSrc?: string;
   isBlank?: boolean;
 }
 
@@ -15,17 +18,20 @@ const TEMPLATE: Template[] = [
   {
     id: 'univ-team',
     title: '대학 팀 프로젝트',
-    icon: <Flag size={18}/>
+    icon: <Flag size={18}/>,
+    imageSrc: '/template/univ-team.svg'
   },
   {
     id: 'contest',
     title: '공모전 / 대회',
-    icon: <Trophy size={18}/>
+    icon: <Trophy size={18}/>,
+    imageSrc: '/template/contest.svg'
   },
   {
     id: 'research',
     title: '연구 / 논문 프로젝트',
-    icon: <BookOpen size={18}/>
+    icon: <BookOpen size={18}/>,
+    imageSrc: '/template/research.svg'
   },
   {
     id: 'empty',
@@ -37,20 +43,69 @@ const TEMPLATE: Template[] = [
 
 export default function NewTemplatePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedId, setSelectedId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   function handleBack() {
     router.back();
   }
 
-  function handleSelect() {
-    if (!selectedId) {
-      alert('템플릿을 선택해 주세요.');
-      return;
-    }
+  async function handleSelect() {  
+    const projectName = searchParams.get('projectName') || '';
+    const description = searchParams.get('description') || '';
+    const startDate = searchParams.get('startDate') || null;
+    const endDate = searchParams.get('endDate') || null;
 
-    //router.push('다음 페이지');
+    try {
+      setIsSubmitting(true);
+
+      const { data: { user } } = await supabase.auth.getUser();
+
+      if (!user) {
+        alert('로그인이 필요합니다.');
+        return;
+      }
+
+      const { data: userData, error: userError } = await supabase
+        .from('profiles')
+        .select('name, email')
+        .eq('id', user.id)
+        .single();
+
+      if (userError) {
+        console.error('유저 정보 조회 실패:', userError);
+      }
+
+      const { error } = await supabase
+      .from('projectdata')
+      .insert([
+        {
+          project_name: projectName,
+          description: description,
+          start_date: startDate || null, 
+          end_date: endDate || null,
+          selected_template: selectedId,
+          user_id: user.id,
+          user_name: userData?.name || '알 수 없음',
+          user_email: userData?.email || user.email
+        }
+      ]);
+
+      if (error) {
+        alert('프로젝트 저장 실패: ' + (error as Error).message);
+        return;
+      }
+
+      alert('프로젝트가 성공적으로 생성되었습니다!');
+      router.push('/Projectmainpage');  
+    } catch (err) {
+      console.error(err);
+      alert('저장 중 오류가 발생했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function getFilteredTemplate() {
@@ -181,20 +236,26 @@ export default function NewTemplatePage() {
                       transition: 'border 0.2s ease'
                     }}
                   >
-                    {/* 예시 이미지 영역 */}
+                    {/* SVG 이미지 영역 */}
                     <div
                       style={{
                         flex: 1,
-                        backgroundColor: '#FFFFFF',
+                        position: 'relative',
+                        backgroundColor: '#F8F9FA',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: '#000000',
-                        fontSize: '18px',
-                        fontWeight: 'bold'
+                        overflow: 'hidden'
                       }}
                     >
-                      예시 이미지
+                      {item.imageSrc && (
+                        <Image
+                          src={item.imageSrc}
+                          alt={item.title}
+                          fill
+                          style={{ objectFit: 'contain' }}
+                        />
+                      )}
                     </div>
 
                     {/* 하단 타이틀 영역 */}
@@ -250,15 +311,16 @@ export default function NewTemplatePage() {
             <button
               type="button"
               onClick={handleSelect}
+              disabled={!selectedId}
               style={{
                 padding: '12px 36px',
-                backgroundColor: '#2058EC',
+                backgroundColor: selectedId ? '#2058EC' : '#CCCCCC',
                 border: 'none',
                 borderRadius: '8px',
                 color: '#FFFFFF',
                 fontSize: '16px',
                 fontWeight: 'bold',
-                cursor: 'pointer'
+                cursor: selectedId ? 'pointer' : 'not-allowed'
               }}
             > 선택</button>
           </div>

@@ -188,18 +188,11 @@ export default function MainPage() {
   ]);
 
   // 모달 상태
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
-
-  // 새 프로젝트 입력 필드
-  const [newTitle, setNewTitle] = useState("");
-  const [newLeader, setNewLeader] = useState("박성빈");
-  const [newMembers, setNewMembers] = useState(5);
-  const [newDeadline, setNewDeadline] = useState("2026.12.23");
 
   // 검색 및 정렬 결과 계산
   const filteredProjects = useMemo(() => {
-    let result = projects.filter(
+    const result = projects.filter(
       (p) =>
         p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.leader.toLowerCase().includes(searchQuery.toLowerCase())
@@ -241,32 +234,6 @@ export default function MainPage() {
     setTodos((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
     );
-  };
-
-  // 프로젝트 생성 처리
-  const handleCreateProject = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newTitle.trim()) return;
-
-    if (projects.length >= maxProjectsLimit) {
-      alert("최대 프로젝트 수(8개)에 도달하였습니다. 플랜 업그레이드가 필요합니다.");
-      setIsCreateModalOpen(false);
-      setIsUpgradeModalOpen(true);
-      return;
-    }
-
-    const newProject: Project = {
-      id: Date.now(),
-      title: newTitle,
-      leader: newLeader,
-      members: Number(newMembers),
-      deadline: newDeadline.replace(/-/g, "."),
-      dDay: "D-Day 30",
-    };
-
-    setProjects((prev) => [...prev, newProject]);
-    setNewTitle("");
-    setIsCreateModalOpen(false);
   };
 
   return (
@@ -441,7 +408,7 @@ export default function MainPage() {
             
             {/* [카드 0] 프로젝트 생성 카드 */}
             <button
-              onClick={() => setIsCreateModalOpen(true)}
+              onClick={() => router.push("/newprojectpage")}
               className="group border-2 border-[#8CA5FF] rounded-2xl p-5 flex flex-col items-center justify-center min-h-[220px] bg-white hover:bg-blue-50/40 hover:border-blue-500 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-300"
             >
               <div className="w-14 h-14 rounded-full border-2 border-[#8CA5FF] group-hover:border-blue-500 flex items-center justify-center mb-3 text-[#8CA5FF] group-hover:text-blue-500 transition-colors">
@@ -528,6 +495,7 @@ export default function MainPage() {
       {/* ================= 우측 펼침 버튼 (사이드바 닫혀있을 때만 표시) ================= */}
       {!isSidebarOpen && (
         <button
+        
           onClick={() => setIsSidebarOpen(true)}
           aria-label="알림 및 할일 패널 열기"
           title="우측 패널 열기"
@@ -782,76 +750,6 @@ export default function MainPage() {
 
         </div>
       </aside>
-
-      {/* 프로젝트 생성 모달 */}
-      {isCreateModalOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fadeIn">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl border border-gray-100">
-            <h2 className="text-xl font-bold text-gray-900 mb-4">새 프로젝트 생성</h2>
-            <form onSubmit={handleCreateProject} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">프로젝트명</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="예: 프로젝트 NODE"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">팀장 이름</label>
-                  <input
-                    type="text"
-                    required
-                    value={newLeader}
-                    onChange={(e) => setNewLeader(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">팀원 수</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    value={newMembers}
-                    onChange={(e) => setNewMembers(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">마감일</label>
-                <input
-                  type="date"
-                  required
-                  value={newDeadline}
-                  onChange={(e) => setNewDeadline(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-              <div className="flex justify-end space-x-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg transition-colors"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-lg transition-colors shadow-md"
-                >
-                  생성하기
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* 플랜 업그레이드 안내 모달 */}
       {isUpgradeModalOpen && (

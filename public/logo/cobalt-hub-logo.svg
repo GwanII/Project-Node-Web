@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 160" width="660" height="160" role="img" aria-label="Cobalt Hub logo">
+  <defs>
+    <linearGradient id="cobaltGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B3D91" />
+      <stop offset="100%" stop-color="#2D6CDF" />
+    </linearGradient>
+  </defs>
+
+  <!-- Badge -->
+  <rect x="8" y="8" width="144" height="144" rx="36" fill="url(#cobaltGrad)" />
+
+  <!-- Hub / network mark (shifted down 11.5px so its bounding box is centered in the badge) -->
+  <g stroke="#FFFFFF" stroke-width="6" stroke-linecap="round">
+    <line x1="80" y1="91.5" x2="80" y2="45.5" />
+    <line x1="80" y1="91.5" x2="119.8" y2="114.5" />
+    <line x1="80" y1="91.5" x2="40.2" y2="114.5" />
+  </g>
+  <circle cx="80" cy="91.5" r="15" fill="#FFFFFF" />
+  <circle cx="80" cy="45.5" r="9" fill="#FFFFFF" />
+  <circle cx="119.8" cy="114.5" r="9" fill="#FFFFFF" />
+  <circle cx="40.2" cy="114.5" r="9" fill="#FFFFFF" />
+
+  <!-- Wordmark -->
+  <text x="180" y="106" font-family="Arial, 'Helvetica Neue', Helvetica, sans-serif" font-weight="800" font-size="72">
+    <tspan fill="#0B3D91">Cobalt</tspan><tspan fill="#2D6CDF"> Hub</tspan>
+  </text>
+</svg>
