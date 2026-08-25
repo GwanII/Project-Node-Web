@@ -106,9 +106,13 @@ export default function SignupPage() {
   return (
     <main className="flex min-h-screen">
       {/* 왼쪽 소개 영역 */}
-      <section className="w-3/5 bg-blue-500">
-        <div className="p-6 text-white">
-          <h1 className="text-3xl font-bold">이름</h1>
+      <section className="w-3/5 bg-blue-300">
+        <div className="p-6">
+          <img
+            src="/logo/cobalt-hub-logo.svg"
+            alt="cobalt-hub-logo"
+            className="h-auto w-[280px]"
+          />
         </div>
       </section>
 
