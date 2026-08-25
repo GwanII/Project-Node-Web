@@ -34,7 +34,7 @@ import {
   Dices,
   Shuffle,
   Rows3,
-  Home,
+  House,
 } from "lucide-react";
 
 // Types
@@ -262,12 +262,7 @@ export default function ProjectMainPage() {
 
   // 미니게임: 사다리타기 상태
   const LADDER_ROW_COUNT = 10;
-  const MIN_LADDER_COUNT = 2;
-  const MAX_LADDER_COUNT = 10;
   const [isLadderModalOpen, setIsLadderModalOpen] = useState(false);
-  const [ladderParticipants, setLadderParticipants] = useState<string[]>(
-    members.map((m) => m.name)
-  );
   const [ladderOutcomes, setLadderOutcomes] = useState<string[]>(
     members.map((_, i) => `결과 ${i + 1}`)
   );
@@ -288,26 +283,19 @@ export default function ProjectMainPage() {
   };
 
   const openLadderModal = () => {
-    setLadderRungs(generateLadderRungs(ladderParticipants.length));
+    setLadderOutcomes((prev) =>
+      members.map((_, i) => prev[i] ?? `결과 ${i + 1}`)
+    );
+    setLadderRungs(generateLadderRungs(members.length));
     setShowLadderResult(false);
-    setSelectedLadderStart(null);
-    setLadderPathDrawn(false);
     setIsLadderModalOpen(true);
   };
 
   const closeLadderModal = () => setIsLadderModalOpen(false);
 
   const handleRegenerateLadder = () => {
-    setLadderRungs(generateLadderRungs(ladderParticipants.length));
+    setLadderRungs(generateLadderRungs(members.length));
     setShowLadderResult(false);
-    setSelectedLadderStart(null);
-    setLadderPathDrawn(false);
-  };
-
-  const updateLadderParticipant = (index: number, value: string) => {
-    setLadderParticipants((prev) =>
-      prev.map((name, i) => (i === index ? value : name))
-    );
   };
 
   const updateLadderOutcome = (index: number, value: string) => {
@@ -316,78 +304,21 @@ export default function ProjectMainPage() {
     );
   };
 
-  const addLadderColumn = () => {
-    if (ladderParticipants.length >= MAX_LADDER_COUNT) return;
-    const newCount = ladderParticipants.length + 1;
-    setLadderParticipants((prev) => [...prev, `참가자 ${prev.length + 1}`]);
-    setLadderOutcomes((prev) => [...prev, `결과 ${prev.length + 1}`]);
-    setLadderRungs(generateLadderRungs(newCount));
-    setShowLadderResult(false);
-    setSelectedLadderStart(null);
-    setLadderPathDrawn(false);
-  };
-
-  const removeLadderColumn = () => {
-    if (ladderParticipants.length <= MIN_LADDER_COUNT) return;
-    const newCount = ladderParticipants.length - 1;
-    setLadderParticipants((prev) => prev.slice(0, -1));
-    setLadderOutcomes((prev) => prev.slice(0, -1));
-    setLadderRungs(generateLadderRungs(newCount));
-    setShowLadderResult(false);
-    setSelectedLadderStart(null);
-    setLadderPathDrawn(false);
-  };
-
   const ladderResultMap = useMemo(() => {
-    const count = ladderParticipants.length;
     const results: number[] = [];
-    for (let start = 0; start < count; start++) {
+    for (let start = 0; start < members.length; start++) {
       let pos = start;
       for (const row of ladderRungs) {
         if (pos > 0 && row[pos - 1]) {
           pos -= 1;
-        } else if (pos < count - 1 && row[pos]) {
+        } else if (pos < members.length - 1 && row[pos]) {
           pos += 1;
         }
       }
       results.push(pos);
     }
     return results;
-  }, [ladderRungs, ladderParticipants.length]);
-
-  // 사다리타기 결과 공개 후 이름 클릭 시 본인 경로 애니메이션
-  const LADDER_COL_WIDTH = 64;
-  const [selectedLadderStart, setSelectedLadderStart] = useState<number | null>(null);
-  const [ladderPathDrawn, setLadderPathDrawn] = useState(false);
-
-  const handleSelectLadderPath = (index: number) => {
-    setSelectedLadderStart(index);
-    setLadderPathDrawn(false);
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => setLadderPathDrawn(true));
-    });
-  };
-
-  const selectedLadderPathPoints = useMemo(() => {
-    if (selectedLadderStart === null) return [] as { x: number; y: number }[];
-    const points: { x: number; y: number }[] = [];
-    let pos = selectedLadderStart;
-    points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y: 0 });
-    ladderRungs.forEach((row, r) => {
-      const y = r * 28 + 14;
-      if (pos > 0 && row[pos - 1]) {
-        points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y });
-        pos -= 1;
-        points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y });
-      } else if (pos < ladderParticipants.length - 1 && row[pos]) {
-        points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y });
-        pos += 1;
-        points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y });
-      }
-    });
-    points.push({ x: pos * LADDER_COL_WIDTH + LADDER_COL_WIDTH / 2, y: LADDER_ROW_COUNT * 28 });
-    return points;
-  }, [selectedLadderStart, ladderRungs, ladderParticipants.length]);
+  }, [ladderRungs, members.length]);
 
   // 사용자 프로필 메뉴 및 계정 변경 관련 상태 (mainpage와 동일)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -896,18 +827,9 @@ export default function ProjectMainPage() {
         return (
           <>
             {/* Card Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <Folder className="w-5 h-5 text-gray-700" />
-                <span>자료 보관함</span>
-              </div>
-              <button
-                onClick={() => router.push("/storage")}
-                title="자료보관함으로 이동"
-                className="p-1.5 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors flex items-center justify-center"
-              >
-                <Home className="w-4 h-4" />
-              </button>
+            <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg mb-4">
+              <Folder className="w-5 h-5 text-gray-700" />
+              <span>자료 보관함</span>
             </div>
 
             {/* 가장 최근에 사용한 자료 8개 (위 4개 / 아래 4개) */}
@@ -943,9 +865,18 @@ export default function ProjectMainPage() {
         return (
           <>
             {/* Card Header */}
-            <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg mb-4">
-              <Dices className="w-5 h-5 text-gray-700" />
-              <span>미니게임</span>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
+                <Dices className="w-5 h-5 text-gray-700" />
+                <span>미니게임</span>
+              </div>
+              <button
+                onClick={() => router.push("/minigamearchive")}
+                className="p-1.5 text-gray-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
+                title="미니게임 보관함으로 이동"
+              >
+                <House className="w-4 h-4" />
+              </button>
             </div>
 
             {/* 미니게임 목록 */}
@@ -979,12 +910,21 @@ export default function ProjectMainPage() {
                 </span>
                 <span>투표</span>
               </div>
-              <button
-                onClick={() => setIsNewVoteModalOpen(true)}
-                className="bg-[#8CA5FF] hover:bg-blue-600 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl transition-colors shadow-sm"
-              >
-                NEW
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setIsNewVoteModalOpen(true)}
+                  className="bg-[#8CA5FF] hover:bg-blue-600 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl transition-colors shadow-sm"
+                >
+                  NEW
+                </button>
+                <button
+                  onClick={() => router.push("/voterecord")}
+                  className="p-1.5 text-gray-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
+                  title="투표 기록으로 이동"
+                >
+                  <House className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* 2 Column Voting Layout */}
@@ -2284,10 +2224,10 @@ export default function ProjectMainPage() {
             </div>
 
             <p className="text-sm text-gray-600">
-              팀원 중 몇 명을 뽑을지 정하고 무작위로 뽑습니다.
             </p>
 
             <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
+              <span className="text-sm font-semibold text-gray-700">뽑을 인원 수</span>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -2376,74 +2316,52 @@ export default function ProjectMainPage() {
               </button>
             </div>
 
-            <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-2.5">
-              <span className="text-sm font-semibold text-gray-700">참가자 수</span>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={removeLadderColumn}
-                  disabled={ladderParticipants.length <= MIN_LADDER_COUNT}
-                  className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  −
-                </button>
-                <span className="w-6 text-center font-bold text-gray-900">
-                  {ladderParticipants.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={addLadderColumn}
-                  disabled={ladderParticipants.length >= MAX_LADDER_COUNT}
-                  className="w-7 h-7 rounded-full border border-gray-300 flex items-center justify-center text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  +
-                </button>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-gray-700">
+                결과 항목 (자유롭게 입력해보세요)
+              </label>
+              <div
+                className="grid gap-2"
+                style={{ gridTemplateColumns: `repeat(${members.length}, minmax(0, 1fr))` }}
+              >
+                {ladderOutcomes.map((outcome, i) => (
+                  <input
+                    key={i}
+                    value={outcome}
+                    onChange={(e) => updateLadderOutcome(i, e.target.value)}
+                    className="w-full min-w-0 px-2 py-1.5 text-xs text-center rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                ))}
               </div>
             </div>
 
             <div className="overflow-x-auto pb-1">
               <div
-                className="mx-auto space-y-1"
-                style={{ width: Math.max(ladderParticipants.length * 64, 240) }}
+                className="mx-auto"
+                style={{ width: Math.max(members.length * 64, 240) }}
               >
-                {/* 참가자 이름 (결과 공개 전엔 수정, 공개 후엔 클릭해서 본인 경로 확인) */}
+                {/* 참가자 이름 */}
                 <div
-                  className="grid gap-2"
-                  style={{ gridTemplateColumns: `repeat(${ladderParticipants.length}, minmax(0, 1fr))` }}
+                  className="grid mb-1"
+                  style={{ gridTemplateColumns: `repeat(${members.length}, minmax(0, 1fr))` }}
                 >
-                  {ladderParticipants.map((name, i) =>
-                    showLadderResult ? (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => handleSelectLadderPath(i)}
-                        title="클릭하면 본인 경로가 표시됩니다"
-                        className={`w-full min-w-0 px-2 py-1.5 text-xs text-center font-bold rounded-lg border-2 truncate transition-colors ${
-                          selectedLadderStart === i
-                            ? "border-gray-900 bg-gray-900 text-white"
-                            : "border-gray-200 text-gray-800 hover:border-gray-400"
-                        }`}
-                      >
-                        {name}
-                      </button>
-                    ) : (
-                      <input
-                        key={i}
-                        value={name}
-                        onChange={(e) => updateLadderParticipant(i, e.target.value)}
-                        className="w-full min-w-0 px-2 py-1.5 text-xs text-center font-bold rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                      />
-                    )
-                  )}
+                  {members.map((member) => (
+                    <div
+                      key={member.id}
+                      className="text-center text-xs font-bold text-gray-800 px-1 truncate"
+                    >
+                      {member.name}
+                    </div>
+                  ))}
                 </div>
 
                 {/* 사다리 시각화 */}
                 <svg
-                  width={ladderParticipants.length * 64}
+                  width={members.length * 64}
                   height={LADDER_ROW_COUNT * 28}
                   className="block"
                 >
-                  {ladderParticipants.map((_, i) => (
+                  {members.map((_, i) => (
                     <line
                       key={`col-${i}`}
                       x1={i * 64 + 32}
@@ -2470,36 +2388,20 @@ export default function ProjectMainPage() {
                         )
                     )
                   )}
-                  {selectedLadderStart !== null && (
-                    <polyline
-                      points={selectedLadderPathPoints.map((p) => `${p.x},${p.y}`).join(" ")}
-                      fill="none"
-                      stroke="#000000"
-                      strokeWidth={4}
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      pathLength={1}
-                      style={{
-                        strokeDasharray: 1,
-                        strokeDashoffset: ladderPathDrawn ? 0 : 1,
-                        transition: "stroke-dashoffset 1s linear",
-                      }}
-                    />
-                  )}
                 </svg>
 
-                {/* 결과 항목 (자유롭게 수정 가능) */}
+                {/* 결과 라벨 */}
                 <div
-                  className="grid gap-2"
-                  style={{ gridTemplateColumns: `repeat(${ladderOutcomes.length}, minmax(0, 1fr))` }}
+                  className="grid mt-1"
+                  style={{ gridTemplateColumns: `repeat(${members.length}, minmax(0, 1fr))` }}
                 >
                   {ladderOutcomes.map((outcome, i) => (
-                    <input
+                    <div
                       key={i}
-                      value={outcome}
-                      onChange={(e) => updateLadderOutcome(i, e.target.value)}
-                      className="w-full min-w-0 px-2 py-1.5 text-xs text-center rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                    />
+                      className="text-center text-xs font-bold text-gray-500 px-1 truncate"
+                    >
+                      {outcome}
+                    </div>
                   ))}
                 </div>
               </div>
@@ -2513,11 +2415,7 @@ export default function ProjectMainPage() {
                 다시 섞기
               </button>
               <button
-                onClick={() => {
-                  setShowLadderResult(true);
-                  setSelectedLadderStart(null);
-                  setLadderPathDrawn(false);
-                }}
+                onClick={() => setShowLadderResult(true)}
                 className="flex-1 py-2.5 bg-[#8CA5FF] hover:bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-md transition-colors"
               >
                 결과 보기
@@ -2526,21 +2424,14 @@ export default function ProjectMainPage() {
 
             {showLadderResult && (
               <div className="space-y-1.5 pt-2 border-t border-gray-100">
-                <p className="text-xs text-gray-500">
-                  위에서 본인 이름을 클릭하면 경로가 색칠됩니다.
-                </p>
-                {ladderParticipants.map((name, i) => (
+                {members.map((member, i) => (
                   <div
-                    key={i}
-                    className={`flex items-center justify-between text-sm rounded-lg px-3 py-2 transition-colors ${
-                      selectedLadderStart === i ? "bg-gray-900 text-white" : "bg-gray-50"
-                    }`}
+                    key={member.id}
+                    className="flex items-center justify-between text-sm bg-gray-50 rounded-lg px-3 py-2"
                   >
-                    <span className={`font-bold ${selectedLadderStart === i ? "text-white" : "text-gray-900"}`}>
-                      {name}
-                    </span>
-                    <span className={selectedLadderStart === i ? "text-gray-300" : "text-gray-400"}>→</span>
-                    <span className={`font-semibold ${selectedLadderStart === i ? "text-white" : "text-blue-600"}`}>
+                    <span className="font-bold text-gray-900">{member.name}</span>
+                    <span className="text-gray-400">→</span>
+                    <span className="font-semibold text-blue-600">
                       {ladderOutcomes[ladderResultMap[i]]}
                     </span>
                   </div>

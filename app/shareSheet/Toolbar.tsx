@@ -34,6 +34,10 @@ interface ToolbarProps {
   isLocked: boolean;
   onToggleLock: () => void;
   members: Member[];
+  /** 지금 열려 있는 창 수. 한 사람이 두 창을 열면 2가 된다. */
+  connections: number;
+  /** 실시간 신호가 연결됐는지. 끊겨 있으면 접속자 정보가 낡은 값이다. */
+  isPresenceConnected: boolean;
   onInsertImage: () => void;
   onInsertTable: () => void;
   onInsertVote: () => void;
@@ -58,6 +62,8 @@ export default function Toolbar({
   isLocked,
   onToggleLock,
   members,
+  connections,
+  isPresenceConnected,
   onInsertImage,
   onInsertTable,
   onInsertVote,
@@ -203,6 +209,27 @@ export default function Toolbar({
 
       {/* 접속자 목록 */}
       <div className="flex items-center gap-2 shrink-0">
+        {/* 실시간 접속 상태 */}
+        <div
+          className={`flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full ${
+            isPresenceConnected
+              ? "bg-green-50 text-green-700"
+              : "bg-gray-100 text-gray-400"
+          }`}
+          title={
+            isPresenceConnected
+              ? `지금 ${connections}개의 창이 이 문서를 열고 있습니다`
+              : "실시간 연결을 기다리는 중"
+          }
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              isPresenceConnected ? "bg-green-500 animate-pulse" : "bg-gray-300"
+            }`}
+          />
+          {isPresenceConnected ? `${connections}명 접속 중` : "연결 중…"}
+        </div>
+
         <div className="flex items-center gap-1.5">
           {members.map((member) => (
             <div key={member.id} className="flex flex-col items-center gap-0.5">
