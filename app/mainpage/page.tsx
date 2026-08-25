@@ -192,7 +192,7 @@ export default function MainPage() {
 
   // 검색 및 정렬 결과 계산
   const filteredProjects = useMemo(() => {
-    let result = projects.filter(
+    const result = projects.filter(
       (p) =>
         p.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         p.leader.toLowerCase().includes(searchQuery.toLowerCase())
