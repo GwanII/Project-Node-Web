@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 
 import Sidebar from "./Sidebar";
@@ -8,20 +8,18 @@ import Toolbar, { type EditorMode, type Member, type SaveState } from "./Toolbar
 import Editor, { type EditorHandle } from "./Editor";
 import DrawingLayer from "./DrawingLayer";
 import {
+  getMyName,
   loadDocument,
   saveDocument,
   type SheetDocument,
   type Stroke,
 } from "./data";
+import { usePresence } from "./usePresence";
+import { useCollaboration } from "./useCollaboration";
 
-// 1단계에서는 고정 목록을 쓴다. 실제 접속 감지(Supabase Realtime Presence)는 나중 단계에서 붙인다.
-const MEMBERS: Member[] = [
-  { id: 1, name: "박성빈", isActive: true },
-  { id: 2, name: "박기완", isActive: false },
-  { id: 3, name: "한주현", isActive: true },
-  { id: 4, name: "권소희", isActive: false },
-  { id: 5, name: "박서연", isActive: false },
-];
+// 팀원 명단. 아직 팀원 테이블이 없어서 고정 목록을 쓴다.
+// 누가 "지금 접속 중"인지는 아래 usePresence 가 실시간으로 알려준다.
+const TEAM_MEMBERS = ["박성빈", "박기완", "한주현", "권소희", "박서연"];
 
 // 지금은 문서가 하나뿐이다. 나중에 여러 문서를 다루게 되면 주소에서 받아온다.
 const DOCUMENT_ID = "default-sheet";
@@ -36,6 +34,33 @@ export default function ShareSheetPage() {
 
   const editorRef = useRef<EditorHandle>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // --- 누가 지금 이 문서를 보고 있나 -------------------------------------
+  const [myName, setMyName] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getMyName().then((name) => {
+      if (alive) setMyName(name);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const presence = usePresence(DOCUMENT_ID, myName);
+
+  // 동시 편집 준비. 내 이름을 알아낸 뒤에 시작한다.
+  const collab = useCollaboration(DOCUMENT_ID, myName !== null);
+
+  // 명단에 없는 사람(로그인 계정 등)도 접속하면 뒤에 붙여서 보여준다.
+  const members: Member[] = useMemo(() => {
+    const extras = presence.names.filter((n) => !TEAM_MEMBERS.includes(n));
+    return [...TEAM_MEMBERS, ...extras].map((name, index) => ({
+      id: index + 1,
+      name,
+      isActive: presence.names.includes(name),
+    }));
+  }, [presence.names]);
 
   // 최신 문서를 항상 들고 있어야 여러 곳에서 들어오는 수정을 안 놓친다.
   const docRef = useRef<SheetDocument | null>(null);
@@ -141,7 +166,9 @@ export default function ShareSheetPage() {
           onModeChange={setMode}
           isLocked={doc.isLocked}
           onToggleLock={handleToggleLock}
-          members={MEMBERS}
+          members={members}
+          connections={presence.connections}
+          isPresenceConnected={presence.isConnected}
           onInsertImage={() => editorRef.current?.insertImage()}
           onInsertTable={() => editorRef.current?.insertTable()}
           onInsertVote={() => editorRef.current?.insertVote()}
@@ -165,14 +192,24 @@ export default function ShareSheetPage() {
         <div className="flex-1 relative overflow-hidden">
           <div ref={scrollRef} className="absolute inset-0 overflow-y-auto bg-gray-50">
             <div className="min-h-full bg-white">
-              <Editor
-                ref={editorRef}
-                isLocked={doc.isLocked}
-                mode={mode}
-                initialContent={doc.content}
-                onChange={handleContentChange}
-                scrollRef={scrollRef}
-              />
+              {collab.ydoc && collab.provider && myName ? (
+                <Editor
+                  ref={editorRef}
+                  isLocked={doc.isLocked}
+                  mode={mode}
+                  initialContent={doc.content}
+                  onChange={handleContentChange}
+                  scrollRef={scrollRef}
+                  ydoc={collab.ydoc}
+                  provider={collab.provider}
+                  isSynced={collab.isSynced}
+                  myName={myName}
+                />
+              ) : (
+                <div className="max-w-4xl mx-auto px-10 py-8 text-sm text-gray-400">
+                  편집기를 준비하는 중…
+                </div>
+              )}
             </div>
           </div>
 

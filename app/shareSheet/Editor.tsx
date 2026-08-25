@@ -12,6 +12,10 @@ import StarterKit from "@tiptap/starter-kit";
 import { TextStyleKit } from "@tiptap/extension-text-style";
 import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
+import Collaboration from "@tiptap/extension-collaboration";
+import CollaborationCaret from "@tiptap/extension-collaboration-caret";
+import type * as Y from "yjs";
+import type { SupabaseYjsProvider } from "./SupabaseYjsProvider";
 import { VoteBlock, createEmptyVote } from "./VoteBlock";
 import { CalendarBlock, createEmptyCalendar } from "./CalendarBlock";
 import {
@@ -55,6 +59,14 @@ interface EditorProps {
   onChange: (html: string) => void;
   /** 본문 스크롤 영역. 서식 툴바가 이 안을 벗어나지 않게 하는 데 쓴다. */
   scrollRef: React.RefObject<HTMLDivElement | null>;
+  /** 동시 편집용 Yjs 문서. 이게 준비된 뒤에만 이 컴포넌트가 그려진다. */
+  ydoc: Y.Doc;
+  /** 다른 사람과 신호를 주고받는 연결. 커서 표시에 쓴다. */
+  provider: SupabaseYjsProvider;
+  /** 첫 맞춤이 끝났는지. 끝나야 초기 내용을 넣어도 안전하다. */
+  isSynced: boolean;
+  /** 내 이름. 다른 사람 화면에 커서와 함께 표시된다. */
+  myName: string;
   ref?: React.Ref<EditorHandle>;
 }
 
@@ -87,6 +99,17 @@ const LINE_HEIGHTS = [
 
 /** 버튼을 눌러도 본문 선택이 풀리지 않게 막는다. */
 const keepSelection = (e: React.MouseEvent) => e.preventDefault();
+
+/** 커서 색. 같은 이름이면 늘 같은 색이 나오도록 이름에서 계산한다. */
+const CARET_COLORS = ["#8CA5FF", "#FF4D4D", "#22C55E", "#A855F7", "#F59E0B", "#06B6D4"];
+
+function colorForName(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i += 1) {
+    hash = (hash * 31 + name.charCodeAt(i)) % 100000;
+  }
+  return CARET_COLORS[hash % CARET_COLORS.length];
+}
 
 const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
@@ -253,6 +276,10 @@ export default function Editor({
   initialContent,
   onChange,
   scrollRef,
+  ydoc,
+  provider,
+  isSynced,
+  myName,
   ref,
 }: EditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -266,6 +293,9 @@ export default function Editor({
     setBoundary(scrollRef.current);
   }, [scrollRef]);
 
+  /** 초기 내용을 아직 안 넣었으면 false. 이때는 저장을 내보내지 않는다. */
+  const hasSeededRef = useRef(false);
+
   // onUpdate 안에서 옛날 onChange 를 붙잡고 있지 않도록 ref 로 최신 값을 본다.
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -276,7 +306,9 @@ export default function Editor({
     // 서버에서 미리 그리면 하이드레이션이 어긋나므로 클라이언트에서만 그린다.
     immediatelyRender: false,
     extensions: [
-      StarterKit,
+      // 동시 편집에서는 Yjs 가 되돌리기를 맡는다.
+      // 기본 되돌리기를 켜두면 남이 친 글까지 되돌려버려서 반드시 꺼야 한다.
+      StarterKit.configure({ undoRedo: false }),
       // TextStyleKit 하나로 글자색 / 배경색 / 글씨체 / 크기 / 줄간격이 모두 들어온다.
       TextStyleKit.configure({
         // 줄간격만 기본값(글자 단위)에서 문단 단위로 바꾼다.
@@ -289,9 +321,28 @@ export default function Editor({
       TableKit.configure({ table: { resizable: true } }),
       VoteBlock,
       CalendarBlock,
+      // 편집 내용을 Yjs 문서에 붙인다. 이 순간부터 내용의 주인은 Yjs 다.
+      Collaboration.configure({ document: ydoc }),
+      // 다른 사람의 커서와 이름을 보여준다.
+      CollaborationCaret.configure({
+        provider,
+        user: { name: myName, color: colorForName(myName) },
+      }),
     ],
-    content: initialContent,
-    onUpdate: ({ editor: e }) => onChangeRef.current(e.getHTML()),
+    /*
+     * content 를 주면 안 된다.
+     * 접속한 사람마다 같은 내용을 한 번씩 밀어넣어서 문서가 중복된다.
+     * 초기 내용은 아래 효과에서 "비어 있을 때 한 번만" 넣는다.
+     */
+    /*
+     * 초기화가 끝나기 전에는 부모에게 알리지 않는다.
+     * 동시 편집에서는 편집기가 "빈 상태"로 시작해서 Yjs 가 내용을 채워 넣는데,
+     * 그 찰나에 저장이 돌면 데이터베이스의 멀쩡한 글이 빈 값으로 덮인다.
+     */
+    onUpdate: ({ editor: e }) => {
+      if (!hasSeededRef.current) return;
+      onChangeRef.current(e.getHTML());
+    },
     editorProps: {
       attributes: {
         class: "sheet-prose",
@@ -305,6 +356,22 @@ export default function Editor({
   useEffect(() => {
     editor?.setEditable(isEditable);
   }, [editor, isEditable]);
+
+  /*
+   * 초기 내용 넣기.
+   * 아무도 편집한 적이 없는 새 문서일 때만, 첫 맞춤이 끝난 뒤 한 번 넣는다.
+   * 맞춤 전에 넣으면 이미 편집 중인 남의 내용 위에 겹쳐 쓰게 된다.
+   */
+  useEffect(() => {
+    if (!editor || !isSynced || hasSeededRef.current) return;
+
+    const fragment = ydoc.getXmlFragment("default");
+    if (fragment.length === 0 && initialContent.trim()) {
+      editor.commands.setContent(initialContent);
+    }
+    // 내용을 넣은 뒤에 열어야 초기화 중 저장이 안 나간다.
+    hasSeededRef.current = true;
+  }, [editor, isSynced, ydoc, initialContent]);
 
   useImperativeHandle(ref, () => ({
     insertImage: () => fileInputRef.current?.click(),
