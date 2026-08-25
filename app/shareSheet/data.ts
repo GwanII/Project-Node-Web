@@ -91,6 +91,24 @@ interface SheetItemRow {
 export const CURRENT_USER = "박성빈";
 
 /**
+ * 지금 화면을 보고 있는 사람의 표시 이름.
+ *
+ * 로그인이 되어 있으면 그 계정 이름을 쓰고, 아니면 위의 임시 이름을 쓴다.
+ * shareSheet 에는 아직 로그인 검사가 없어서 대부분 임시 이름으로 떨어지는데,
+ * 팀에서 로그인 필수로 바꾸면 이 함수가 자동으로 실제 이름을 돌려준다.
+ */
+export async function getMyName(): Promise<string> {
+  try {
+    const { data } = await supabase.auth.getUser();
+    const email = data.user?.email;
+    if (email) return email.split("@")[0];
+  } catch {
+    // 로그인 확인이 실패해도 화면은 그대로 돌아가야 한다.
+  }
+  return CURRENT_USER;
+}
+
+/**
  * 오늘 날짜 "yyyy-mm-dd". 모듈이 처음 불릴 때 한 번만 계산한다.
  * (렌더 중에 현재 시각을 읽으면 리렌더마다 값이 달라져 불안정해진다.)
  *
@@ -263,6 +281,65 @@ export async function saveDocument(doc: SheetDocument): Promise<SheetDocument> {
   }
 
   return { ...doc, updatedAt };
+}
+
+// ---------------------------------------------------------------------------
+// 동시 편집 상태 (Yjs)
+//
+// documents.content 는 "지금 화면에 보이는 결과"(HTML)이고,
+// ydoc_state 는 "누가 언제 무엇을 고쳤는지"까지 담은 Yjs 원본이다.
+// 아무도 접속해 있지 않을 때 새로 들어온 사람은 이 값으로 문서를 복원한다.
+// 바이트 덩어리라서 base64 문자열로 감싸 text 칸에 넣는다.
+// ---------------------------------------------------------------------------
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(text: string): Uint8Array {
+  const binary = atob(text);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+export async function loadYDocState(id: string): Promise<Uint8Array | null> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("ydoc_state")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[shareSheet] 편집 상태 불러오기 실패:", error.message);
+    return null;
+  }
+
+  const raw = (data as { ydoc_state: string | null } | null)?.ydoc_state;
+  if (!raw) return null;
+
+  try {
+    return base64ToBytes(raw);
+  } catch {
+    console.error("[shareSheet] 편집 상태가 손상되어 무시합니다.");
+    return null;
+  }
+}
+
+export async function saveYDocState(id: string, state: Uint8Array): Promise<void> {
+  const { error } = await supabase
+    .from("documents")
+    .update({ ydoc_state: bytesToBase64(state) })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[shareSheet] 편집 상태 저장 실패:", error.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
