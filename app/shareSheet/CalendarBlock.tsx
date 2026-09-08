@@ -26,7 +26,7 @@ export interface CalendarEvent {
   color: string;
 }
 
-interface CalendarAttrs {
+export interface CalendarAttrs {
   calendarId: string;
   title: string;
   events: CalendarEvent[];
@@ -75,15 +75,24 @@ function shiftMonth(month: string, delta: number): string {
 // 화면
 // ---------------------------------------------------------------------------
 
-function CalendarBlockView({
-  node,
-  updateAttributes,
-  deleteNode,
-  editor,
-}: ReactNodeViewProps) {
-  const attrs = node.attrs as CalendarAttrs;
+/**
+ * 달력 화면 그 자체. Tiptap 과 아무 관계가 없다.
+ * 시트지에서는 편집기 안의 블록으로, 슬라이드에서는 물체로 같은 부품을 쓴다.
+ */
+export function CalendarBody({
+  attrs,
+  onChange,
+  onDelete,
+  canEdit,
+}: {
+  attrs: CalendarAttrs;
+  onChange: (patch: Partial<CalendarAttrs>) => void;
+  onDelete: () => void;
+  canEdit: boolean;
+}) {
+  const updateAttributes = onChange;
+  const deleteNode = onDelete;
   const events: CalendarEvent[] = attrs.events ?? [];
-  const canEdit = editor.isEditable;
 
   // 보고 있는 달과 고른 날짜는 문서 내용이 아니라 화면 상태라서 저장하지 않는다.
   const [month, setMonth] = useState(THIS_MONTH);
@@ -109,9 +118,8 @@ function CalendarBlockView({
     updateAttributes({ events: events.filter((e) => e.id !== id) });
 
   return (
-    <NodeViewWrapper className="my-3">
       <div
-        className="border-2 border-[#8CA5FF] rounded-2xl bg-white p-4 space-y-3"
+        className="border-2 border-[#8CA5FF] rounded-2xl bg-white p-4 space-y-3 h-full overflow-auto"
         /* 투표 블록과 같은 이유. 없으면 ProseMirror 와 React 가 포커스를 두고 다툰다. */
         contentEditable={false}
         onKeyDown={(e) => e.stopPropagation()}
@@ -332,6 +340,24 @@ function CalendarBlockView({
           </div>
         )}
       </div>
+  );
+}
+
+/** Tiptap 블록으로 쓸 때의 껍데기. 화면은 위의 CalendarBody 가 그린다. */
+function CalendarNodeView({
+  node,
+  updateAttributes,
+  deleteNode,
+  editor,
+}: ReactNodeViewProps) {
+  return (
+    <NodeViewWrapper className="my-3">
+      <CalendarBody
+        attrs={node.attrs as CalendarAttrs}
+        onChange={updateAttributes}
+        onDelete={deleteNode}
+        canEdit={editor.isEditable}
+      />
     </NodeViewWrapper>
   );
 }
@@ -376,6 +402,6 @@ export const CalendarBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(CalendarBlockView);
+    return ReactNodeViewRenderer(CalendarNodeView);
   },
 });

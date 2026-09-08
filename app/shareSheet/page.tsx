@@ -12,7 +12,6 @@ import {
   loadDocument,
   saveDocument,
   type SheetDocument,
-  type Stroke,
 } from "./data";
 import { usePresence } from "./usePresence";
 import { useCollaboration } from "./useCollaboration";
@@ -135,11 +134,6 @@ export default function ShareSheetPage() {
     [update]
   );
 
-  const handleStrokesChange = useCallback(
-    (strokes: Stroke[]) => update({ strokes }),
-    [update]
-  );
-
   const handleToggleLock = useCallback(() => {
     update({ isLocked: !docRef.current?.isLocked });
   }, [update]);
@@ -213,12 +207,15 @@ export default function ShareSheetPage() {
             </div>
           </div>
 
-          <DrawingLayer
-            isActive={isDrawing}
-            scrollRef={scrollRef}
-            initialStrokes={doc.strokes}
-            onStrokesChange={handleStrokesChange}
-          />
+          {collab.ydoc && collab.provider && (
+            <DrawingLayer
+              isActive={isDrawing}
+              scrollRef={scrollRef}
+              ydoc={collab.ydoc}
+              awareness={collab.provider.awareness}
+              legacyStrokes={doc.strokes}
+            />
+          )}
         </div>
       </main>
     </div>

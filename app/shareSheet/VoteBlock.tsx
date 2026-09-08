@@ -25,7 +25,7 @@ export interface VoteOption {
   voters: string[];
 }
 
-interface VoteAttrs {
+export interface VoteAttrs {
   voteId: string;
   title: string;
   deadline: string;
@@ -48,15 +48,26 @@ export function createEmptyVote(): VoteAttrs {
 // 화면
 // ---------------------------------------------------------------------------
 
-function VoteBlockView({
-  node,
-  updateAttributes,
-  deleteNode,
-  editor,
-}: ReactNodeViewProps) {
-  const attrs = node.attrs as VoteAttrs;
+/**
+ * 투표 화면 그 자체. Tiptap 과 아무 관계가 없다.
+ *
+ * 시트지에서는 편집기 안의 블록으로,
+ * 슬라이드에서는 판 위에 놓는 물체로 같은 부품을 쓴다.
+ */
+export function VoteBody({
+  attrs,
+  onChange,
+  onDelete,
+  canEdit,
+}: {
+  attrs: VoteAttrs;
+  onChange: (patch: Partial<VoteAttrs>) => void;
+  onDelete: () => void;
+  canEdit: boolean;
+}) {
+  const updateAttributes = onChange;
+  const deleteNode = onDelete;
   const options: VoteOption[] = attrs.options ?? [];
-  const canEdit = editor.isEditable;
 
   const totalVotes = options.reduce((sum, o) => sum + o.voters.length, 0);
   const myChoice = options.find((o) => o.voters.includes(CURRENT_USER));
@@ -91,9 +102,8 @@ function VoteBlockView({
     setOptions(options.map((o) => (o.id === optionId ? { ...o, text } : o)));
 
   return (
-    <NodeViewWrapper className="my-3">
       <div
-        className="border-2 border-[#8CA5FF] rounded-2xl bg-white p-4 space-y-3"
+        className="border-2 border-[#8CA5FF] rounded-2xl bg-white p-4 space-y-3 h-full overflow-auto"
         /*
          * 이 표시가 없으면 ProseMirror 가 이 안을 자기가 편집하는 영역으로 여겨서
          * React 와 서로 포커스를 뺏다가 무한 렌더 루프에 빠진다.
@@ -229,6 +239,24 @@ function VoteBlockView({
           )}
         </div>
       </div>
+  );
+}
+
+/** Tiptap 블록으로 쓸 때의 껍데기. 화면은 위의 VoteBody 가 그린다. */
+function VoteNodeView({
+  node,
+  updateAttributes,
+  deleteNode,
+  editor,
+}: ReactNodeViewProps) {
+  return (
+    <NodeViewWrapper className="my-3">
+      <VoteBody
+        attrs={node.attrs as VoteAttrs}
+        onChange={updateAttributes}
+        onDelete={deleteNode}
+        canEdit={editor.isEditable}
+      />
     </NodeViewWrapper>
   );
 }
@@ -275,6 +303,6 @@ export const VoteBlock = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(VoteBlockView);
+    return ReactNodeViewRenderer(VoteNodeView);
   },
 });

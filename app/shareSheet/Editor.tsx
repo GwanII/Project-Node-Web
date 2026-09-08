@@ -385,13 +385,21 @@ export default function Editor({
       editor
         ?.chain()
         .focus()
-        .insertContent({ type: "vote", attrs: createEmptyVote() })
+        // 뒤에 빈 문단을 같이 넣는다. 커서가 블록 위에 남으면
+        // 다음에 넣는 블록이 이걸 덮어쓴다.
+        .insertContent([
+          { type: "vote", attrs: createEmptyVote() },
+          { type: "paragraph" },
+        ])
         .run(),
     insertCalendar: () =>
       editor
         ?.chain()
         .focus()
-        .insertContent({ type: "calendarBlock", attrs: createEmptyCalendar() })
+        .insertContent([
+          { type: "calendarBlock", attrs: createEmptyCalendar() },
+          { type: "paragraph" },
+        ])
         .run(),
   }));
 
