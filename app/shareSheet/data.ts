@@ -42,9 +42,27 @@ export interface Point {
 }
 
 export interface Stroke {
+  /** 획마다 붙는 고유 번호. 동시 편집에서 "어느 획인지" 를 가리키는 이름표다. */
+  id: string;
   points: Point[];
   color: string;
   width: number;
+  /** 같은 값을 가진 획끼리 한 묶음으로 다룬다. 묶이지 않았으면 없다. */
+  groupId?: string;
+  /** 겹칠 때 누가 위에 오는지. Y.Map 은 순서를 보장하지 않아서 따로 들고 있어야 한다. */
+  order: number;
+}
+
+/**
+ * 예전에 저장된 획에는 id 와 order 가 없다.
+ * 불러올 때 한 번 채워 넣어서 새 구조로 옮긴다.
+ */
+export function ensureStrokeFields(strokes: Stroke[]): Stroke[] {
+  return strokes.map((stroke, index) => ({
+    ...stroke,
+    id: stroke.id ?? createId(),
+    order: stroke.order ?? index,
+  }));
 }
 
 export interface SheetDocument {
