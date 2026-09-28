@@ -167,7 +167,7 @@ export default function MiniGameArchivePage() {
   ).length;
 
   const handleReplay = () => {
-    router.push("/Projectmainpage");
+    router.push("/mainpage");
   };
 
   const handleShare = () => {
@@ -189,7 +189,7 @@ export default function MiniGameArchivePage() {
       {/* 상단 헤더 */}
       <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-gray-100 sticky top-0 z-10">
         <Link
-          href="/Projectmainpage"
+          href="/mainpage"
           className="flex items-center gap-1.5 text-sm font-semibold text-[#1f2437] hover:text-[#4f46e5] transition-colors bg-white px-3 py-1.5 rounded-lg border border-[#c7d2fe] shadow-none"
         >
           <ArrowLeft className="w-4 h-4" />
