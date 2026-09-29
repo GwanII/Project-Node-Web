@@ -27,10 +27,17 @@ import {
   Redo2,
   User,
   Play,
+  LogIn,
 } from "lucide-react";
 
 import Sidebar from "../shareSheet/Sidebar";
-import { getMyName, loadDocument } from "../shareSheet/data";
+import EditAccessBar from "../shareSheet/EditAccessBar";
+import {
+  getMyIdentity,
+  loadDocument,
+  type MyIdentity,
+} from "../shareSheet/data";
+import { useEditAccess } from "../shareSheet/useEditAccess";
 import { useCollaboration } from "../shareSheet/useCollaboration";
 import { usePresence } from "../shareSheet/usePresence";
 import SlideCanvas from "./SlideCanvas";
@@ -78,15 +85,16 @@ const SHAPE_TOOLS: Array<{ type: ShapeType; icon: typeof Square }> = [
 ];
 
 export default function ShareSlidePage() {
-  const [myName, setMyName] = useState<string | null>(null);
+  // 아직 확인 중이면 null 이다. 그래서 버튼이 깜빡이지 않는다.
+  const [me, setMe] = useState<MyIdentity | null>(null);
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // documents 에 이 줄이 있어야 편집 상태를 저장할 수 있다.
-    Promise.all([getMyName(), loadDocument(DECK_ID)]).then(([name]) => {
+    Promise.all([getMyIdentity(), loadDocument(DECK_ID)]).then(([found]) => {
       if (!alive) return;
-      setMyName(name);
+      setMe(found);
       setIsReady(true);
     });
     return () => {
@@ -94,12 +102,20 @@ export default function ShareSlidePage() {
     };
   }, []);
 
+  const myName = me?.name ?? null;
+
   const collab = useCollaboration(DECK_ID, isReady);
   const presence = usePresence(DECK_ID, myName);
   const ydoc = collab.ydoc;
 
   /** 내가 낸 변경임을 표시하는 딱지. 되돌리기가 내 것만 되돌리게 한다. */
   const origin = useMemo(() => ({}), []);
+
+  /** 편집 요청은 되돌리기 대상이 아니므로 딱지를 따로 쓴다. */
+  const accessOrigin = useMemo(() => ({}), []);
+
+  // 손님은 보기만 된다. 팀장이 수락하면 고칠 수 있다.
+  const access = useEditAccess(ydoc, me, accessOrigin);
 
   const undoManager = useMemo(() => {
     if (!ydoc) return null;
@@ -173,7 +189,13 @@ export default function ShareSlidePage() {
       : (slides[0]?.id ?? null);
 
   const current = slides.find((s) => s.id === activeId) ?? null;
-  const isLocked = current?.locked ?? false;
+  /*
+   * 손대지 못하는 이유는 두 가지다 — 장에 자물쇠가 걸렸거나, 편집 권한이 없거나.
+   * 아래 버튼들이 전부 이 값을 보고 있어서 한 군데서 합쳐 둔다.
+   * 단 장별 자물쇠 버튼 자체는 access.canEdit 을 봐야 한다.
+   * 이 값으로 막으면 한 번 잠근 뒤에 아무도 풀 수 없게 된다.
+   */
+  const isLocked = (current?.locked ?? false) || !access.canEdit;
   const activeIndex = Math.max(
     slides.findIndex((s) => s.id === activeId),
     0
@@ -486,15 +508,32 @@ export default function ShareSlidePage() {
               />
               {presence.isConnected ? `${presence.connections}명 접속 중` : "연결 중…"}
             </div>
-            <button
-              type="button"
-              className="p-1.5 rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
-              title={myName ?? "내 프로필"}
-            >
-              <User className="w-5 h-5" />
-            </button>
+            {/*
+              로그인을 안 했으면 여기가 "로그인" 버튼이 된다.
+              로그인을 안 해도 편집은 되지만, 접속자 목록에 실명 대신 손님으로 뜬다.
+            */}
+            {me?.isLoggedIn === false ? (
+              <a
+                href="/login"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[#8CA5FF] text-[11px] font-bold text-[#4457B4] hover:bg-[#EEF2FF] transition-colors"
+                title="로그인하면 접속자 목록에 실제 이름으로 표시됩니다"
+              >
+                <LogIn className="w-4 h-4" />
+                로그인
+              </a>
+            ) : (
+              <a
+                href="/profile"
+                className="p-1.5 rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
+                title={myName ? `${myName} — 내 프로필` : "내 프로필"}
+              >
+                <User className="w-5 h-5" />
+              </a>
+            )}
           </div>
         </header>
+
+        <EditAccessBar me={me} access={access} what="슬라이드" />
 
         <div className="flex-1 flex min-h-0">
           <SlideList
@@ -509,6 +548,7 @@ export default function ShareSlidePage() {
             onRemove={(id) => removeSlide(ydoc, id, origin)}
             onMove={(from, to) => moveSlide(ydoc, from, to, origin)}
             onToggleLock={(id, locked) => setSlideLocked(ydoc, id, locked, origin)}
+            canEdit={access.canEdit}
           />
 
           <SlideCanvas
@@ -520,6 +560,8 @@ export default function ShareSlidePage() {
             onShapePlaced={() => setPendingShape(null)}
             selectedIds={selectedIds}
             onSelectedIdsChange={setSelectedIds}
+            // 이름을 아직 모르는 동안은 위 isLocked 가 참이라 투표가 잠겨 있다.
+            myName={myName ?? ""}
             editingId={editingId}
             onEditingIdChange={setEditingId}
           />

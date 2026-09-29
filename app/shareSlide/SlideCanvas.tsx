@@ -47,6 +47,8 @@ interface SlideCanvasProps {
   onShapePlaced: () => void;
   selectedIds: string[];
   onSelectedIdsChange: (ids: string[]) => void;
+  /** 지금 보고 있는 사람 이름. 투표에서 "누가 골랐는지" 기록에 쓴다. */
+  myName: string;
   /** 지금 글을 치고 있는 텍스트 상자. 없으면 null. */
   editingId: string | null;
   onEditingIdChange: (id: string | null) => void;
@@ -182,6 +184,7 @@ export default function SlideCanvas({
   onShapePlaced,
   selectedIds,
   onSelectedIdsChange,
+  myName,
   editingId,
   onEditingIdChange,
 }: SlideCanvasProps) {
@@ -558,6 +561,7 @@ export default function SlideCanvas({
                       }
                       onDelete={() => write(() => objectsMap.delete(object.id))}
                       canEdit={!locked}
+                      currentUser={myName}
                     />
                   </div>
                 ) : (

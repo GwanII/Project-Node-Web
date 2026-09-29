@@ -14,6 +14,7 @@ import {
   User,
   Loader2,
   Check,
+  LogIn,
 } from "lucide-react";
 
 export type EditorMode = "typing" | "drawing";
@@ -45,6 +46,18 @@ interface ToolbarProps {
   saveState: SaveState;
   /** ISO 문자열. 마지막으로 저장된 시각. */
   updatedAt: string;
+  /** 지금 보고 있는 사람의 이름. 아직 확인 중이면 null. */
+  myName: string | null;
+  /** 로그인 여부. 확인 중에는 null 이라서 버튼이 깜빡이지 않는다. */
+  isLoggedIn: boolean | null;
+  /** 지금 고칠 수 있는지. 자물쇠와 편집 권한을 모두 따진 결과다. */
+  canEdit: boolean;
+  /**
+   * 편집 권한이 있는지. 자물쇠는 따지지 않는다.
+   * 자물쇠 버튼에는 이걸 써야 한다 — canEdit 으로 막으면 한 번 잠근 뒤에
+   * 아무도 풀 수 없게 된다.
+   */
+  hasEditRight: boolean;
 }
 
 /** 추가 버튼 드롭다운 항목. 1단계에서는 '파일'만 실제로 동작한다. */
@@ -70,6 +83,10 @@ export default function Toolbar({
   onInsertCalendar,
   saveState,
   updatedAt,
+  myName,
+  isLoggedIn,
+  canEdit,
+  hasEditRight,
 }: ToolbarProps) {
   const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement>(null);
@@ -163,9 +180,15 @@ export default function Toolbar({
           <button
             type="button"
             onClick={() => setIsAddMenuOpen((prev) => !prev)}
-            disabled={isLocked}
+            disabled={!canEdit}
             className="flex items-center gap-1 bg-[#FF4D4D] hover:bg-red-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold text-sm px-3.5 py-1.5 rounded-xl shadow-sm transition-colors"
-            title={isLocked ? "잠금 상태에서는 추가할 수 없습니다" : "파일·표·달력·투표 추가"}
+            title={
+              isLocked
+                ? "잠금 상태에서는 추가할 수 없습니다"
+                : !canEdit
+                  ? "편집 권한이 없어서 추가할 수 없습니다"
+                  : "파일·표·달력·투표 추가"
+            }
           >
             <Plus className="w-4 h-4" />
             <span>추가</span>
@@ -196,12 +219,19 @@ export default function Toolbar({
         <button
           type="button"
           onClick={onToggleLock}
-          className={`p-2 rounded-lg border transition-colors ${
+          disabled={!hasEditRight}
+          className={`p-2 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
             isLocked
               ? "bg-[#FF4D4D] border-[#FF4D4D] text-white shadow-sm"
               : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
           }`}
-          title={isLocked ? "잠금 해제 (편집 가능)" : "잠그기 (편집 불가)"}
+          title={
+            !hasEditRight
+              ? "편집 권한이 없어서 자물쇠를 바꿀 수 없습니다"
+              : isLocked
+                ? "잠금 해제 (편집 가능)"
+                : "잠그기 (편집 불가)"
+          }
         >
           {isLocked ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
         </button>
@@ -252,13 +282,28 @@ export default function Toolbar({
 
         <div className="w-px h-8 bg-gray-200 mx-1" />
 
-        <button
-          type="button"
-          className="p-1.5 rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
-          title="내 프로필"
-        >
-          <User className="w-5 h-5" />
-        </button>
+        {/*
+          로그인을 안 했으면 여기가 "로그인" 버튼이 된다.
+          로그인을 안 해도 편집은 되지만, 접속자 목록에 실명 대신 손님으로 뜬다.
+        */}
+        {isLoggedIn === false ? (
+          <a
+            href="/login"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[#8CA5FF] text-[11px] font-bold text-[#4457B4] hover:bg-[#EEF2FF] transition-colors"
+            title="로그인하면 접속자 목록에 실제 이름으로 표시됩니다"
+          >
+            <LogIn className="w-4 h-4" />
+            로그인
+          </a>
+        ) : (
+          <a
+            href="/profile"
+            className="p-1.5 rounded-full border border-gray-200 text-gray-700 hover:bg-gray-100 transition-colors"
+            title={myName ? `${myName} — 내 프로필` : "내 프로필"}
+          >
+            <User className="w-5 h-5" />
+          </a>
+        )}
       </div>
     </header>
   );
