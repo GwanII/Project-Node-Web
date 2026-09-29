@@ -13,6 +13,8 @@
  * 각 동네의 관례라서, 변환은 이 파일 안에서만 한다.
  */
 
+import type * as Y from "yjs";
+
 import { supabase } from "@/src/lib/supabase";
 
 // ---------------------------------------------------------------------------
@@ -100,31 +102,163 @@ interface SheetItemRow {
 // ---------------------------------------------------------------------------
 
 /**
- * 지금 이 문서를 보고 있는 사람.
+ * 투표에서 "누가 골랐는지" 를 기록할 때 쓰는 임시 이름.
  *
- * 로그인이 붙기 전까지 쓰는 임시 값이다. 투표에서 "누가 골랐는지" 를 기록하는 데 쓴다.
- * 나중에 Supabase 인증이 붙으면 로그인한 사용자 id 로 바꾸면 되고,
- * 이 상수만 바꾸면 되도록 한 곳에 모아뒀다.
+ * 화면에 보이는 이름은 아래 getMyIdentity 가 로그인 계정에서 가져오지만,
+ * 투표(VoteBlock)는 화면을 그리는 도중에 이름이 바로 필요해서 기다릴 수가 없다.
+ * 그래서 아직 이 고정 값을 쓴다 — 지금은 누가 투표해도 이 이름으로 기록된다.
+ * 고치려면 이름을 미리 받아 두고 넘겨주는 작업이 필요하다.
  */
 export const CURRENT_USER = "박성빈";
 
 /**
- * 지금 화면을 보고 있는 사람의 표시 이름.
+ * 팀장 이름.
  *
- * 로그인이 되어 있으면 그 계정 이름을 쓰고, 아니면 위의 임시 이름을 쓴다.
- * shareSheet 에는 아직 로그인 검사가 없어서 대부분 임시 이름으로 떨어지는데,
- * 팀에서 로그인 필수로 바꾸면 이 함수가 자동으로 실제 이름을 돌려준다.
+ * 손님(로그인 안 한 사람)의 편집 요청을 수락할 수 있는 사람이다.
+ * 로그인 계정에 저장된 이름이 이 값과 똑같아야 팀장으로 인정된다.
+ * 팀장이 바뀌거나 계정 이름이 달라지면 이 한 줄만 고치면 된다.
  */
-export async function getMyName(): Promise<string> {
+export const TEAM_LEADER = "박기완";
+
+/** 지금 화면을 보고 있는 사람. */
+export interface MyIdentity {
+  /** 화면과 실시간 접속자 목록에 보여줄 이름 */
+  name: string;
+  /** 로그인이 되어 있는지. 안 되어 있으면 손님이다. */
+  isLoggedIn: boolean;
+  /** 팀장인지. 팀장만 손님의 편집 요청을 수락할 수 있다. */
+  isLeader: boolean;
+}
+
+/** 손님 이름을 브라우저에 적어 두는 칸 이름. */
+const GUEST_NAME_KEY = "shareSheet:guestName";
+
+/**
+ * 로그인하지 않은 사람에게 붙여 줄 이름.
+ *
+ * 사람마다 다른 꼬리표를 달아 둔다. 그냥 "손님" 으로 두면 로그인 안 한 팀원이
+ * 여러 명 들어왔을 때 접속자 목록에서 한 명으로 합쳐져 버린다.
+ *
+ * 한 번 정한 이름은 브라우저에 적어 두고 계속 쓴다. 새로고침마다 이름이
+ * 바뀌면 팀장이 수락해 준 편집 권한이 날아가고, 요청만 계속 쌓인다.
+ * (브라우저에만 남는 값이라 다른 사람에게는 전해지지 않는다.)
+ */
+let guestName: string | null = null;
+function getGuestName(): string {
+  if (guestName) return guestName;
+
+  try {
+    const saved = window.localStorage.getItem(GUEST_NAME_KEY);
+    if (saved) {
+      guestName = saved;
+      return saved;
+    }
+  } catch {
+    // 시크릿 창 등에서는 읽기가 막힌다. 그럼 그냥 새로 만든다.
+  }
+
+  const created = `손님(${Math.random().toString(36).slice(2, 6)})`;
+  guestName = created;
+  try {
+    window.localStorage.setItem(GUEST_NAME_KEY, created);
+  } catch {
+    // 적어 두지 못해도 이 창에서는 계속 같은 이름을 쓴다.
+  }
+  return created;
+}
+
+/**
+ * 지금 화면을 보고 있는 사람이 누구인지 알아낸다.
+ *
+ * 이름을 이 순서로 찾는다. 위에 있는 걸 찾으면 아래는 보지 않는다.
+ *   ① profiles.name   — 프로필 페이지에서 저장한 이름. 가장 정확하다.
+ *   ② 구글 계정 이름   — 구글로 로그인했으면 여기에 실명이 들어있다.
+ *   ③ 메일 주소 앞부분 — 위 둘이 다 없을 때.
+ *   ④ 손님             — 로그인을 안 했을 때.
+ *
+ * ① 을 맨 위에 둔 이유: 지금은 profiles 에 행이 없어서 ② 로 떨어지지만,
+ * 나중에 행이 생기면 이 코드를 고치지 않아도 알아서 ① 을 쓰게 된다.
+ */
+export async function getMyIdentity(): Promise<MyIdentity> {
+  const asGuest: MyIdentity = {
+    name: getGuestName(),
+    isLoggedIn: false,
+    isLeader: false,
+  };
+
+  /** 로그인한 사람의 이름이 정해지면 팀장인지까지 같이 판단해서 넘긴다. */
+  const asMember = (name: string): MyIdentity => ({
+    name,
+    isLoggedIn: true,
+    isLeader: name === TEAM_LEADER,
+  });
+
   try {
     const { data } = await supabase.auth.getUser();
-    const email = data.user?.email;
-    if (email) return email.split("@")[0];
+    const user = data.user;
+    if (!user) return asGuest;
+
+    // ① 프로필에 저장된 이름
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("name")
+      .eq("id", user.id)
+      .maybeSingle();
+    const profileName = profile?.name?.trim();
+    if (profileName) return asMember(profileName);
+
+    // ② 구글 계정 이름
+    const meta = user.user_metadata as
+      | { full_name?: string; name?: string }
+      | undefined;
+    const metaName = (meta?.full_name ?? meta?.name)?.trim();
+    if (metaName) return asMember(metaName);
+
+    // ③ 메일 주소 앞부분
+    const emailName = user.email?.split("@")[0]?.trim();
+    if (emailName) return asMember(emailName);
+
+    // 로그인은 됐는데 이름이 될 만한 게 하나도 없는 경우
+    return { ...asGuest, isLoggedIn: true };
   } catch {
     // 로그인 확인이 실패해도 화면은 그대로 돌아가야 한다.
+    return asGuest;
   }
-  return CURRENT_USER;
 }
+
+/** 이름만 필요할 때 쓰는 짧은 길. */
+export async function getMyName(): Promise<string> {
+  return (await getMyIdentity()).name;
+}
+
+// ---------------------------------------------------------------------------
+// 편집 권한 — 손님은 보기만, 팀장이 수락하면 고칠 수 있다
+// ---------------------------------------------------------------------------
+
+/** 손님이 보낸 편집 요청 하나. */
+export interface EditRequest {
+  /** 요청한 손님 이름 */
+  name: string;
+  /** 요청한 시각 (ISO 문자열) */
+  at: string;
+  /** 수락한 팀장 이름. 아직 수락 전이면 없다. */
+  approvedBy?: string;
+}
+
+/**
+ * 편집 요청이 담기는 곳.
+ *
+ * 문서(Yjs) 안에 넣어 둔다. 그래서 새 테이블이 필요 없고, 팀장이 수락하는
+ * 순간 손님 화면이 바로 풀린다. 이미 있는 ydoc_state 에 같이 저장되므로
+ * 새로고침해도 남아 있다.
+ *
+ * 요청은 문서마다 따로다 — 시트지에서 받은 권한이 슬라이드에는 적용되지 않는다.
+ *
+ * 주의: 이건 화면 단속이지 보안이 아니다. 진짜로 막으려면 Supabase 쪽에
+ * RLS(행 단위 권한)를 걸어야 한다.
+ */
+export const editRequestsOf = (doc: Y.Doc) =>
+  doc.getMap<EditRequest>("editRequests");
 
 /**
  * 오늘 날짜 "yyyy-mm-dd". 모듈이 처음 불릴 때 한 번만 계산한다.

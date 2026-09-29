@@ -13,6 +13,11 @@ interface SlideListProps {
   onRemove: (id: string) => void;
   onMove: (from: number, to: number) => void;
   onToggleLock: (id: string, locked: boolean) => void;
+  /**
+   * 슬라이드를 추가·삭제·이동·잠금할 수 있는지.
+   * 장별 자물쇠는 따지지 않는다 — 여기서 자물쇠를 풀어야 하기 때문이다.
+   */
+  canEdit: boolean;
 }
 
 export default function SlideList({
@@ -23,6 +28,7 @@ export default function SlideList({
   onRemove,
   onMove,
   onToggleLock,
+  canEdit,
 }: SlideListProps) {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -36,8 +42,9 @@ export default function SlideList({
         <button
           type="button"
           onClick={() => onAdd(slides.length - 1)}
-          className="p-1.5 rounded-lg bg-[#8CA5FF] hover:bg-blue-600 text-white transition-colors"
-          title="맨 뒤에 슬라이드 추가"
+          disabled={!canEdit}
+          className="p-1.5 rounded-lg bg-[#8CA5FF] hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white transition-colors"
+          title={canEdit ? "맨 뒤에 슬라이드 추가" : "편집 권한이 없습니다"}
         >
           <Plus className="w-4 h-4" />
         </button>
@@ -49,7 +56,7 @@ export default function SlideList({
           return (
             <div
               key={slide.id}
-              draggable
+              draggable={canEdit}
               onDragStart={() => setDraggingIndex(index)}
               onDragOver={(e) => {
                 e.preventDefault();
@@ -101,12 +108,19 @@ export default function SlideList({
                     e.stopPropagation();
                     onToggleLock(slide.id, !slide.locked);
                   }}
+                  disabled={!canEdit}
                   className={`p-1 rounded transition-colors ${
                     slide.locked
                       ? "text-[#FF4D4D] hover:bg-red-50"
                       : "text-gray-400 hover:bg-gray-100 opacity-0 group-hover:opacity-100"
                   }`}
-                  title={slide.locked ? "잠금 해제" : "이 슬라이드 잠그기"}
+                  title={
+                    !canEdit
+                      ? "편집 권한이 없습니다"
+                      : slide.locked
+                        ? "잠금 해제"
+                        : "이 슬라이드 잠그기"
+                  }
                 >
                   {slide.locked ? (
                     <Lock className="w-3.5 h-3.5" />
@@ -120,8 +134,9 @@ export default function SlideList({
                     e.stopPropagation();
                     onAdd(index);
                   }}
-                  className="p-1 rounded text-gray-400 hover:bg-gray-100 opacity-0 group-hover:opacity-100 transition-colors"
-                  title="이 뒤에 슬라이드 추가"
+                  disabled={!canEdit}
+                  className="p-1 rounded text-gray-400 hover:bg-gray-100 disabled:text-gray-200 disabled:hover:bg-transparent opacity-0 group-hover:opacity-100 transition-colors"
+                  title={canEdit ? "이 뒤에 슬라이드 추가" : "편집 권한이 없습니다"}
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
@@ -131,12 +146,14 @@ export default function SlideList({
                     e.stopPropagation();
                     onRemove(slide.id);
                   }}
-                  disabled={slides.length <= 1}
+                  disabled={slides.length <= 1 || !canEdit}
                   className="p-1 rounded text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:text-gray-200 disabled:hover:bg-transparent opacity-0 group-hover:opacity-100 disabled:opacity-40 transition-colors"
                   title={
-                    slides.length <= 1
-                      ? "마지막 슬라이드는 지울 수 없습니다"
-                      : "슬라이드 삭제"
+                    !canEdit
+                      ? "편집 권한이 없습니다"
+                      : slides.length <= 1
+                        ? "마지막 슬라이드는 지울 수 없습니다"
+                        : "슬라이드 삭제"
                   }
                 >
                   <Trash2 className="w-3.5 h-3.5" />

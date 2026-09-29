@@ -7,14 +7,17 @@ import Sidebar from "./Sidebar";
 import Toolbar, { type EditorMode, type Member, type SaveState } from "./Toolbar";
 import Editor, { type EditorHandle } from "./Editor";
 import DrawingLayer from "./DrawingLayer";
+import EditAccessBar from "./EditAccessBar";
 import {
-  getMyName,
+  getMyIdentity,
   loadDocument,
   saveDocument,
+  type MyIdentity,
   type SheetDocument,
 } from "./data";
 import { usePresence } from "./usePresence";
 import { useCollaboration } from "./useCollaboration";
+import { useEditAccess } from "./useEditAccess";
 
 // 팀원 명단. 아직 팀원 테이블이 없어서 고정 목록을 쓴다.
 // 누가 "지금 접속 중"인지는 아래 usePresence 가 실시간으로 알려준다.
@@ -35,21 +38,33 @@ export default function ShareSheetPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // --- 누가 지금 이 문서를 보고 있나 -------------------------------------
-  const [myName, setMyName] = useState<string | null>(null);
+  // 아직 확인 중이면 null 이다. 그래서 버튼이 깜빡이지 않는다.
+  const [me, setMe] = useState<MyIdentity | null>(null);
   useEffect(() => {
     let alive = true;
-    getMyName().then((name) => {
-      if (alive) setMyName(name);
+    getMyIdentity().then((found) => {
+      if (alive) setMe(found);
     });
     return () => {
       alive = false;
     };
   }, []);
 
+  const myName = me?.name ?? null;
+
   const presence = usePresence(DOCUMENT_ID, myName);
 
   // 동시 편집 준비. 내 이름을 알아낸 뒤에 시작한다.
   const collab = useCollaboration(DOCUMENT_ID, myName !== null);
+
+  /** 내가 낸 변경임을 표시하는 딱지. 편집 요청이 되돌리기에 휩쓸리지 않게 한다. */
+  const accessOrigin = useMemo(() => ({}), []);
+
+  // 손님은 보기만 된다. 팀장이 수락하면 고칠 수 있다.
+  const access = useEditAccess(collab.ydoc, me, accessOrigin);
+
+  // 자물쇠로 잠갔거나 편집 권한이 없으면 고칠 수 없다.
+  const canEdit = access.canEdit && !(doc?.isLocked ?? true);
 
   // 명단에 없는 사람(로그인 계정 등)도 접속하면 뒤에 붙여서 보여준다.
   const members: Member[] = useMemo(() => {
@@ -147,7 +162,7 @@ export default function ShareSheetPage() {
     );
   }
 
-  const isDrawing = mode === "drawing" && !doc.isLocked;
+  const isDrawing = mode === "drawing" && canEdit;
 
   return (
     <div className="flex h-screen bg-white text-gray-800 overflow-hidden font-sans">
@@ -169,7 +184,13 @@ export default function ShareSheetPage() {
           onInsertCalendar={() => editorRef.current?.insertCalendar()}
           saveState={saveState}
           updatedAt={doc.updatedAt}
+          myName={myName}
+          isLoggedIn={me ? me.isLoggedIn : null}
+          canEdit={canEdit}
+          hasEditRight={access.canEdit}
         />
+
+        <EditAccessBar me={me} access={access} what="시트지" />
 
         {doc.isLocked && (
           <div className="flex items-center justify-center gap-2 bg-red-50 border-b border-red-200 text-red-700 text-xs font-bold py-2">
@@ -189,7 +210,8 @@ export default function ShareSheetPage() {
               {collab.ydoc && collab.provider && myName ? (
                 <Editor
                   ref={editorRef}
-                  isLocked={doc.isLocked}
+                  // 자물쇠든 권한 없음이든, 못 고치는 건 똑같다.
+                  isLocked={!canEdit}
                   mode={mode}
                   initialContent={doc.content}
                   onChange={handleContentChange}
