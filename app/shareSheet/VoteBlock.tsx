@@ -21,7 +21,7 @@ import { createId, CURRENT_USER, TODAY } from "./data";
 export interface VoteOption {
   id: string;
   text: string;
-  /** 이 항목을 고른 사람들. 지금은 CURRENT_USER 한 명뿐이고, 로그인이 붙으면 실제 사용자 id 가 들어간다. */
+  /** 이 항목을 고른 사람들. 로그인한 사람은 실제 이름, 손님은 손님 이름이 들어간다. */
   voters: string[];
 }
 
@@ -59,18 +59,21 @@ export function VoteBody({
   onChange,
   onDelete,
   canEdit,
+  currentUser,
 }: {
   attrs: VoteAttrs;
   onChange: (patch: Partial<VoteAttrs>) => void;
   onDelete: () => void;
   canEdit: boolean;
+  /** 지금 투표하는 사람 이름. 누가 골랐는지 이 이름으로 기록한다. */
+  currentUser: string;
 }) {
   const updateAttributes = onChange;
   const deleteNode = onDelete;
   const options: VoteOption[] = attrs.options ?? [];
 
   const totalVotes = options.reduce((sum, o) => sum + o.voters.length, 0);
-  const myChoice = options.find((o) => o.voters.includes(CURRENT_USER));
+  const myChoice = options.find((o) => o.voters.includes(currentUser));
 
   // 마감일과 오늘 둘 다 "yyyy-mm-dd" 라서 문자열 비교로 충분하다.
   // (렌더 중에 Date.now() 를 읽으면 리렌더마다 값이 달라져 불안정해진다.)
@@ -83,11 +86,11 @@ export function VoteBody({
     if (!canEdit || isClosed) return;
     setOptions(
       options.map((o) => {
-        const without = o.voters.filter((v) => v !== CURRENT_USER);
+        const without = o.voters.filter((v) => v !== currentUser);
         if (o.id !== optionId) return { ...o, voters: without };
-        return o.voters.includes(CURRENT_USER)
+        return o.voters.includes(currentUser)
           ? { ...o, voters: without }
-          : { ...o, voters: [...without, CURRENT_USER] };
+          : { ...o, voters: [...without, currentUser] };
       })
     );
   };
@@ -153,7 +156,7 @@ export function VoteBody({
           {options.map((option) => {
             const count = option.voters.length;
             const percent = totalVotes === 0 ? 0 : Math.round((count / totalVotes) * 100);
-            const isMine = option.voters.includes(CURRENT_USER);
+            const isMine = option.voters.includes(currentUser);
 
             return (
               <div key={option.id} className="flex items-center gap-2">
@@ -248,6 +251,7 @@ function VoteNodeView({
   updateAttributes,
   deleteNode,
   editor,
+  extension,
 }: ReactNodeViewProps) {
   return (
     <NodeViewWrapper className="my-3">
@@ -256,6 +260,7 @@ function VoteNodeView({
         onChange={updateAttributes}
         onDelete={deleteNode}
         canEdit={editor.isEditable}
+        currentUser={(extension.options as VoteBlockOptions).currentUser}
       />
     </NodeViewWrapper>
   );
@@ -265,12 +270,22 @@ function VoteNodeView({
 // Tiptap 노드 정의
 // ---------------------------------------------------------------------------
 
-export const VoteBlock = Node.create({
+export interface VoteBlockOptions {
+  /** 지금 이 편집기를 쓰는 사람 이름. Editor 에서 configure 로 넣어 준다. */
+  currentUser: string;
+}
+
+export const VoteBlock = Node.create<VoteBlockOptions>({
   name: "vote",
   group: "block",
   // 안에 글을 쓰는 노드가 아니라 통째로 하나의 덩어리다.
   atom: true,
   draggable: true,
+
+  addOptions() {
+    // Editor 에서 넣어 주지 않았을 때만 쓰이는 대비용 값이다.
+    return { currentUser: CURRENT_USER };
+  },
 
   addAttributes() {
     return {

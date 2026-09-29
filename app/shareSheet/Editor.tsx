@@ -319,7 +319,9 @@ export default function Editor({
       Image.configure({ inline: false, allowBase64: true }),
       // 표. resizable 이면 열 경계를 끌어서 너비를 조절할 수 있다.
       TableKit.configure({ table: { resizable: true } }),
-      VoteBlock,
+      // 투표는 "누가 골랐는지" 를 기록해야 해서 내 이름을 알려 준다.
+      // 이 편집기는 myName 이 정해진 뒤에만 뜨므로 빈 이름이 들어갈 일은 없다.
+      VoteBlock.configure({ currentUser: myName }),
       CalendarBlock,
       // 편집 내용을 Yjs 문서에 붙인다. 이 순간부터 내용의 주인은 Yjs 다.
       Collaboration.configure({ document: ydoc }),
