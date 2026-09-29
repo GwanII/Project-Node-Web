@@ -264,15 +264,6 @@ export default function LoginPage() {
                 >
                   이메일 회원가입
                 </Link>
-
-                <div className="mt-2 text-right">
-                  <Link
-                    href="/reset-password"
-                    className="text-sm text-gray-500 underline hover:text-gray-900"
-                  >
-                    비밀번호 재설정
-                  </Link>
-                </div>
               </div>
 
               {/* SNS 영역 */}
