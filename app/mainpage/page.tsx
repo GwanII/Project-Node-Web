@@ -2,94 +2,63 @@
 
 import React, { useState, useMemo, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/src/lib/supabase";
 
 interface Project {
-  id: number;
+  id: string;
   title: string;
   leader: string;
   members: number;
   deadline: string;
   dDay: string;
-  isHighlighted?: boolean;
+  createdAt: string;
+  endDateRaw: string | null;
 }
 
 interface NotificationItem {
-  id: number;
+  id: string;
   project: string;
   text: string;
   link: string;
 }
 
 interface TodoItem {
-  id: number;
+  id: string;
   project: string;
   text: string;
   deadline: string;
   completed: boolean;
 }
 
+function formatDday(endDate: string | null): string {
+  if (!endDate) return "기한 없음";
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const end = new Date(endDate);
+  const endUtc = Date.UTC(end.getFullYear(), end.getMonth(), end.getDate());
+  const diffDays = Math.round((endUtc - todayUtc) / 86400000);
+  if (diffDays > 0) return `D-Day ${diffDays}`;
+  if (diffDays === 0) return "D-Day";
+  return `D+${Math.abs(diffDays)}`;
+}
+
+function formatDeadlineLabel(endDate: string | null): string {
+  if (!endDate) return "미정";
+  return endDate.replaceAll("-", ".");
+}
+
 export default function MainPage() {
   const router = useRouter();
 
-  // 화면에 6개의 프로젝트가 표시되도록 6개 기본 설정
-  const [projects, setProjects] = useState<Project[]>([
-    {
-      id: 1,
-      title: "프로젝트 NODE",
-      leader: "박성빈",
-      members: 5,
-      deadline: "2026.12.23",
-      dDay: "D-Day 5",
-    },
-    {
-      id: 2,
-      title: "프로젝트 NODE",
-      leader: "박성빈",
-      members: 5,
-      deadline: "2026.12.23",
-      dDay: "D-Day 200",
-      isHighlighted: true,
-    },
-    {
-      id: 3,
-      title: "AI 공모전",
-      leader: "김재호",
-      members: 2,
-      deadline: "2026.08.03",
-      dDay: "D-Day 93",
-    },
-    {
-      id: 4,
-      title: "AI 공모전",
-      leader: "김재호",
-      members: 2,
-      deadline: "2026.08.03",
-      dDay: "D-Day 93",
-    },
-    {
-      id: 5,
-      title: "프로젝트 NODE",
-      leader: "박성빈",
-      members: 5,
-      deadline: "2026.12.23",
-      dDay: "D-Day 5",
-    },
-    {
-      id: 6,
-      title: "PBL2",
-      leader: "박기완",
-      members: 4,
-      deadline: "2026.08.03",
-      dDay: "D-Day 93",
-    },
-  ]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [profileName, setProfileName] = useState("사용자");
 
   const maxProjectsLimit = 8; // 전체 정원을 8개로 설정
 
   // 정렬 및 검색 상태
   const [sortBy, setSortBy] = useState<"deadline" | "latest">("deadline");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<number | null>(2);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // 사이드바 (우측 패널) 열림/닫힘 상태
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -147,48 +116,97 @@ export default function MainPage() {
   const [isNotiFolded, setIsNotiFolded] = useState(false);
   const [isTodoFolded, setIsTodoFolded] = useState(false);
 
-  // 알림 목록 데이터
-  const [notifications, setNotifications] = useState<NotificationItem[]>([
-    {
-      id: 1,
-      project: "프로젝트 NODE",
-      text: "박성빈 님이 새 투표를 올렸습니다.",
-      link: '"버튼 UI 선택"',
-    },
-    {
-      id: 2,
-      project: "프로젝트 NODE",
-      text: "박기완 님이 새 회의록을 작성했습니다.",
-      link: '"1주차 회의록"',
-    },
-    {
-      id: 3,
-      project: "프로젝트 NODE",
-      text: "D-1 투표하지 않은 투표가 있습니다.",
-      link: '"최종 발표자 투표"',
-    },
-  ]);
-
-  // 오늘 마감인 할 일 목록 데이터
-  const [todos, setTodos] = useState<TodoItem[]>([
-    {
-      id: 1,
-      project: "PBL2",
-      text: "최종 발표 PPT 만들기",
-      deadline: "오늘 20:00",
-      completed: false,
-    },
-    {
-      id: 2,
-      project: "프로젝트 NODE",
-      text: "피그마 디자인하기",
-      deadline: "오늘 23:59",
-      completed: true,
-    },
-  ]);
+  // 알림 / 오늘 마감인 할 일 목록 데이터
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
 
   // 모달 상태
   const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
+
+  // 로그인한 사용자의 실제 데이터 불러오기
+  useEffect(() => {
+    const loadData = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        router.replace("/login");
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("name")
+        .eq("id", user.id)
+        .maybeSingle();
+      if (profile?.name) setProfileName(profile.name);
+
+      const { data: projectRows } = await supabase
+        .from("projectdata")
+        .select("id, project_name, user_name, start_date, end_date, created_at")
+        .eq("user_id", user.id);
+      if (projectRows) {
+        setProjects(
+          projectRows.map((row) => ({
+            id: row.id,
+            title: row.project_name,
+            leader: row.user_name,
+            members: 1,
+            deadline: formatDeadlineLabel(row.end_date),
+            dDay: formatDday(row.end_date),
+            createdAt: row.created_at,
+            endDateRaw: row.end_date,
+          }))
+        );
+      }
+
+      const { data: notificationRows } = await supabase
+        .from("notifications")
+        .select("id, message, link, projectdata(project_name)")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false });
+      if (notificationRows) {
+        setNotifications(
+          notificationRows.map((row) => ({
+            id: row.id,
+            project: (row.projectdata as unknown as { project_name: string } | null)?.project_name ?? "알림",
+            text: row.message,
+            link: row.link ?? "",
+          }))
+        );
+      }
+
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
+
+      const { data: todoRows } = await supabase
+        .from("todos")
+        .select("id, text, completed, due_at, projectdata(project_name)")
+        .eq("user_id", user.id)
+        .gte("due_at", startOfDay)
+        .lt("due_at", endOfDay)
+        .order("due_at", { ascending: true });
+      if (todoRows) {
+        setTodos(
+          todoRows.map((row) => ({
+            id: row.id,
+            project: (row.projectdata as unknown as { project_name: string } | null)?.project_name ?? "",
+            text: row.text,
+            deadline: `오늘 ${new Date(row.due_at).toLocaleTimeString("ko-KR", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            })}`,
+            completed: row.completed,
+          }))
+        );
+      }
+    };
+
+    loadData();
+  }, [router]);
 
   // 검색 및 정렬 결과 계산
   const filteredProjects = useMemo(() => {
@@ -200,37 +218,52 @@ export default function MainPage() {
 
     if (sortBy === "deadline") {
       result.sort((a, b) => {
-        const numA = parseInt(a.dDay.replace(/[^0-9]/g, ""), 10) || 0;
-        const numB = parseInt(b.dDay.replace(/[^0-9]/g, ""), 10) || 0;
-        return numA - numB;
+        if (!a.endDateRaw) return 1;
+        if (!b.endDateRaw) return -1;
+        return a.endDateRaw < b.endDateRaw ? -1 : 1;
       });
     } else {
-      result.sort((a, b) => b.id - a.id);
+      result.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     }
     return result;
   }, [projects, searchQuery, sortBy]);
 
   // 삭제 처리
-  const handleDelete = (id: number, e: React.MouseEvent) => {
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm("프로젝트를 삭제하시겠습니까?")) {
-      setProjects((prev) => prev.filter((p) => p.id !== id));
-      if (selectedId === id) setSelectedId(null);
+    if (!confirm("프로젝트를 삭제하시겠습니까?")) return;
+    const { error } = await supabase.from("projectdata").delete().eq("id", id);
+    if (error) {
+      alert("삭제 실패: " + error.message);
+      return;
     }
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+    if (selectedId === id) setSelectedId(null);
   };
 
   // 알림 삭제
-  const removeNotification = (id: number) => {
+  const removeNotification = async (id: string) => {
+    const { error } = await supabase.from("notifications").delete().eq("id", id);
+    if (error) return;
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   };
 
   // 할 일 삭제
-  const removeTodo = (id: number) => {
+  const removeTodo = async (id: string) => {
+    const { error } = await supabase.from("todos").delete().eq("id", id);
+    if (error) return;
     setTodos((prev) => prev.filter((t) => t.id !== id));
   };
 
   // 할 일 완료 토글
-  const toggleTodo = (id: number) => {
+  const toggleTodo = async (id: string) => {
+    const target = todos.find((t) => t.id === id);
+    if (!target) return;
+    const { error } = await supabase
+      .from("todos")
+      .update({ completed: !target.completed })
+      .eq("id", id);
+    if (error) return;
     setTodos((prev) =>
       prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
     );
@@ -263,7 +296,7 @@ export default function MainPage() {
                     onMouseEnter={() => setIsUserMenuOpen(true)}
                     onMouseLeave={() => setIsUserMenuOpen(false)}
                   >
-                    <strong className="text-blue-600 font-semibold cursor-pointer hover:underline">박성빈</strong>
+                    <strong className="text-blue-600 font-semibold cursor-pointer hover:underline">{profileName}</strong>
 
                     {/* 사용자 드롭다운 메뉴 */}
                     {isUserMenuOpen && (
@@ -429,7 +462,7 @@ export default function MainPage() {
                   key={project.id}
                   onClick={() => {
                     setSelectedId(project.id);
-                    router.push("/Projectmainpage");
+                    router.push(`/Projectmainpage/${project.id}`);
                   }}
                   className={`relative border-2 border-[#8CA5FF] rounded-2xl p-5 bg-white flex flex-col justify-between min-h-[220px] cursor-pointer transition-all duration-200 ${
                     isSelected
@@ -533,7 +566,7 @@ export default function MainPage() {
               onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
               className="flex items-center space-x-2 text-gray-800 text-sm font-medium hover:text-blue-600 focus:outline-none transition-colors cursor-pointer"
             >
-              <span><strong className="text-blue-600 font-semibold">박성빈</strong>님 환영합니다</span>
+              <span><strong className="text-blue-600 font-semibold">{profileName}</strong>님 환영합니다</span>
               <div className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center text-gray-500 bg-white shadow-sm hover:border-blue-400">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />

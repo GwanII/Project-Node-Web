@@ -78,28 +78,38 @@ export default function NewTemplatePage() {
         console.error('유저 정보 조회 실패:', userError);
       }
 
-      const { error } = await supabase
+      const { data: project, error } = await supabase
       .from('projectdata')
       .insert([
         {
           project_name: projectName,
           description: description,
-          start_date: startDate || null, 
+          start_date: startDate || null,
           end_date: endDate || null,
           selected_template: selectedId,
           user_id: user.id,
           user_name: userData?.name || '알 수 없음',
           user_email: userData?.email || user.email
         }
-      ]);
+      ])
+      .select('id')
+      .single();
 
-      if (error) {
-        alert('프로젝트 저장 실패: ' + (error as Error).message);
+      if (error || !project) {
+        alert('프로젝트 저장 실패: ' + (error as Error)?.message);
         return;
       }
 
+      await supabase.from('project_members').insert({
+        project_id: project.id,
+        user_id: user.id,
+        name: userData?.name || '알 수 없음',
+        role: '팀장',
+        permission: 'admin',
+      });
+
       alert('프로젝트가 성공적으로 생성되었습니다!');
-      router.push('/Projectmainpage');  
+      router.push(`/Projectmainpage/${project.id}`);
     } catch (err) {
       console.error(err);
       alert('저장 중 오류가 발생했습니다.');

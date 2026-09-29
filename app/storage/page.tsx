@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/src/lib/supabase";
+import QRCode from "qrcode";
+import { QrCode } from "lucide-react";
 
 const COLOR = {
   main: "#8E9BFF",
@@ -26,6 +28,9 @@ type FileRow = {
   id: string; name: string; type: "image" | "url" | "document";
   uploader: string; size?: string; url?: string;
   storage_path?: string; folder_id?: string | null; created_at: string;
+};
+type PendingRow = {
+  id: string; name: string; type: "image" | "document"; size: string; storage_path: string;
 };
 
 const MEETING_DATA: Record<string, string[]> = {
@@ -63,6 +68,11 @@ export default function StoragePage() {
   const [movingFile, setMovingFile]           = useState<FileRow|null>(null);
   const [deletingFolder, setDeletingFolder]   = useState<FolderRow|null>(null);
   const [uploading, setUploading]             = useState(false);
+  const [showQrModal, setShowQrModal]         = useState(false);
+  const [qrDataUrl, setQrDataUrl]             = useState<string | null>(null);
+  const [pendingUploads, setPendingUploads]   = useState<PendingRow[]>([]);
+  const [confirming, setConfirming]           = useState(false);
+  const qrPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── 다중 선택 ──
   const [selected, setSelected]               = useState<Set<string>>(new Set());
@@ -98,6 +108,98 @@ export default function StoragePage() {
   }, []);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // ── 핸드폰 QR 업로드 ──
+  // crypto.randomUUID()는 HTTPS/localhost 같은 "보안 컨텍스트"에서만 동작하는데
+  // 이 기능은 LAN IP(http://192.168.x.x)에서 써야 하므로 직접 랜덤 토큰을 만든다.
+  const generateUploadToken = () =>
+    Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+
+  const fetchPending = useCallback(async (token: string) => {
+    const { data } = await supabase
+      .from("mobile_upload_pending")
+      .select("id, name, type, size, storage_path")
+      .eq("token", token)
+      .order("created_at", { ascending: true });
+    setPendingUploads((data as PendingRow[]) ?? []);
+  }, []);
+
+  const openQrUpload = async () => {
+    setShowUploadMenu(false);
+    const authUserId = await getCurrentUserId();
+
+    const token = generateUploadToken();
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const { error } = await supabase
+      .from("mobile_upload_tokens")
+      .insert({ token, created_by: authUserId, expires_at: expiresAt });
+
+    if (error) {
+      alert("QR 생성 실패: " + error.message);
+      return;
+    }
+
+    const url = `${window.location.origin}/mobile-upload/${token}`;
+    const dataUrl = await QRCode.toDataURL(url, { width: 240, margin: 1 });
+    setPendingUploads([]);
+    setQrDataUrl(dataUrl);
+    setShowQrModal(true);
+
+    qrPollRef.current = setInterval(() => fetchPending(token), 3000);
+  };
+
+  const closeQrUpload = () => {
+    setShowQrModal(false);
+    setQrDataUrl(null);
+    setPendingUploads([]);
+    if (qrPollRef.current) {
+      clearInterval(qrPollRef.current);
+      qrPollRef.current = null;
+    }
+  };
+
+  const handleDeletePending = async (item: PendingRow) => {
+    await supabase.storage.from("cobalt-files").remove([item.storage_path]);
+    await supabase.from("mobile_upload_pending").delete().eq("id", item.id);
+    setPendingUploads((prev) => prev.filter((p) => p.id !== item.id));
+  };
+
+  const handleConfirmUpload = async () => {
+    if (pendingUploads.length === 0) return;
+    setConfirming(true);
+
+    const { error: insertError } = await supabase.from("files").insert(
+      pendingUploads.map((p) => ({
+        name: p.name,
+        type: p.type,
+        uploader: uploaderId,
+        size: p.size,
+        storage_path: p.storage_path,
+        folder_id: currentFolder?.id ?? null,
+      }))
+    );
+
+    if (insertError) {
+      alert("확정 업로드 실패: " + insertError.message);
+      setConfirming(false);
+      return;
+    }
+
+    await supabase
+      .from("mobile_upload_pending")
+      .delete()
+      .in("id", pendingUploads.map((p) => p.id));
+
+    setPendingUploads([]);
+    setConfirming(false);
+    await fetchAll();
+  };
+
+  useEffect(() => {
+    return () => {
+      if (qrPollRef.current) clearInterval(qrPollRef.current);
+    };
+  }, []);
 
   // ── 파일 업로드 ──
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -240,8 +342,11 @@ export default function StoragePage() {
                   <button onClick={() => { fileInputRef.current?.click(); setShowUploadMenu(false); }} style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"14px 16px", background:"none", border:"none", borderBottom:`1px solid ${COLOR.gray100}`, fontSize:14, cursor:"pointer", textAlign:"left", color:COLOR.gray800 }}>
                     <span style={{ fontSize:22 }}>💻</span><div><p style={{ margin:0, fontWeight:500 }}>컴퓨터 파일에서 가져오기</p><p style={{ margin:"2px 0 0", fontSize:12, color:COLOR.gray400 }}>PPT, PDF, 이미지 등</p></div>
                   </button>
-                  <button onClick={() => { setShowUrlInput(true); setShowUploadMenu(false); }} style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"14px 16px", background:"none", border:"none", fontSize:14, cursor:"pointer", textAlign:"left", color:COLOR.gray800 }}>
+                  <button onClick={() => { setShowUrlInput(true); setShowUploadMenu(false); }} style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"14px 16px", background:"none", border:"none", borderBottom:`1px solid ${COLOR.gray100}`, fontSize:14, cursor:"pointer", textAlign:"left", color:COLOR.gray800 }}>
                     <span style={{ fontSize:22 }}>🔗</span><div><p style={{ margin:0, fontWeight:500 }}>URL 링크 추가</p><p style={{ margin:"2px 0 0", fontSize:12, color:COLOR.gray400 }}>노션, 피그마, 구글 링크 등</p></div>
+                  </button>
+                  <button onClick={openQrUpload} style={{ display:"flex", alignItems:"center", gap:12, width:"100%", padding:"14px 16px", background:"none", border:"none", fontSize:14, cursor:"pointer", textAlign:"left", color:COLOR.gray800 }}>
+                    <QrCode size={22} color={COLOR.point} /><div><p style={{ margin:0, fontWeight:500 }}>핸드폰에서 직접 업로드</p><p style={{ margin:"2px 0 0", fontSize:12, color:COLOR.gray400 }}>QR코드를 스캔해서 바로 업로드</p></div>
                   </button>
                 </div>
               )}
@@ -316,6 +421,79 @@ export default function StoragePage() {
             <div style={{ display:"flex", gap:8 }}>
               <button onClick={handleAddUrl} style={{ flex:1, background:COLOR.point, color:"#fff", border:"none", borderRadius:8, padding:"9px 0", fontSize:13, fontWeight:600, cursor:"pointer" }}>추가</button>
               <button onClick={() => setShowUrlInput(false)} style={{ flex:1, background:COLOR.gray100, color:COLOR.gray600, border:"none", borderRadius:8, padding:"9px 0", fontSize:13, cursor:"pointer" }}>취소</button>
+            </div>
+          </div>
+        )}
+
+        {/* 핸드폰 QR 업로드 모달 */}
+        {showQrModal && (
+          <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.45)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:50 }} onClick={closeQrUpload}>
+            <div style={{ background:COLOR.white, borderRadius:20, padding:32, minWidth:440, maxWidth:520, maxHeight:"90vh", overflowY:"auto" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:18 }}>
+                <p style={{ margin:0, fontSize:19, fontWeight:700 }}>핸드폰에서 업로드</p>
+                <button onClick={closeQrUpload} style={{ background:"none", border:"none", cursor:"pointer", color:COLOR.gray400, fontSize:20, padding:0 }}>✕</button>
+              </div>
+
+              {/* QR 영역 */}
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"center", textAlign:"center" }}>
+                {qrDataUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={qrDataUrl} alt="핸드폰 업로드 QR 코드" style={{ width:208, height:208, borderRadius:12, border:`1px solid ${COLOR.gray100}` }} />
+                ) : (
+                  <div style={{ width:208, height:208, display:"flex", alignItems:"center", justifyContent:"center", color:COLOR.gray400, fontSize:13 }}>생성 중...</div>
+                )}
+                <p style={{ marginTop:14, fontSize:12, color:COLOR.gray600, lineHeight:1.6 }}>
+                  핸드폰 카메라로 QR코드를 스캔하면 로그인 없이 바로 사진을 촬영/선택할 수 있어요.
+                  올린 사진은 아래 대기 목록에 뜨고, <strong>확정 업로드</strong>를 눌러야 실제로 저장됩니다. (15분간 유효)
+                </p>
+              </div>
+
+              {/* 대기 중인 사진 영역 (구분된 박스) */}
+              <div style={{ marginTop:22, paddingTop:18, borderTop:`1px solid ${COLOR.gray100}` }}>
+                <p style={{ margin:"0 0 10px", fontSize:13, fontWeight:700, color:COLOR.gray800, textAlign:"left" }}>
+                  대기 중인 사진 {pendingUploads.length > 0 ? `(${pendingUploads.length})` : ""}
+                </p>
+                <div style={{ background:COLOR.gray50, border:`1px solid ${COLOR.gray200}`, borderRadius:14, padding:14, minHeight:120 }}>
+                  {pendingUploads.length === 0 ? (
+                    <div style={{ minHeight:92, display:"flex", alignItems:"center", justifyContent:"center", color:COLOR.gray400, fontSize:13 }}>
+                      아직 올라온 사진이 없어요
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10, marginBottom:14 }}>
+                        {pendingUploads.map(item => (
+                          <div key={item.id} style={{ position:"relative", borderRadius:10, overflow:"hidden", border:`1px solid ${COLOR.border}`, aspectRatio:"1 / 1", background:COLOR.white }}>
+                            {item.type === "image" ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={supabase.storage.from("cobalt-files").getPublicUrl(item.storage_path).data.publicUrl}
+                                alt={item.name}
+                                style={{ width:"100%", height:"100%", objectFit:"cover" }}
+                              />
+                            ) : (
+                              <div style={{ width:"100%", height:"100%", display:"flex", alignItems:"center", justifyContent:"center", fontSize:28 }}>📄</div>
+                            )}
+                            <button
+                              onClick={() => handleDeletePending(item)}
+                              title="삭제"
+                              style={{ position:"absolute", top:4, right:4, width:22, height:22, borderRadius:"50%", background:"rgba(0,0,0,0.55)", color:"#fff", border:"none", cursor:"pointer", fontSize:12, lineHeight:1 }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button
+                        onClick={handleConfirmUpload}
+                        disabled={confirming}
+                        style={{ width:"100%", background:confirming?COLOR.gray400:COLOR.point, color:"#fff", border:"none", borderRadius:10, padding:"11px 0", fontSize:14, fontWeight:700, cursor:confirming?"default":"pointer" }}
+                      >
+                        {confirming ? "업로드 중..." : `확정 업로드 (${pendingUploads.length})`}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
