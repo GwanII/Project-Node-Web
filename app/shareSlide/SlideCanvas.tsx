@@ -6,6 +6,7 @@ import type * as Y from "yjs";
 import { createId } from "../shareSheet/data";
 import TextBoxView from "./TextBoxView";
 import TableView from "./TableView";
+import { SHAPE_BY_NAME } from "./shapes";
 import { VoteBody } from "../shareSheet/VoteBlock";
 import { CalendarBody } from "../shareSheet/CalendarBlock";
 import {
@@ -19,7 +20,6 @@ import {
   nextObjectOrder,
   objectsOf,
   readObjects,
-  type ObjectType,
   type ShapeType,
   type SlideObject,
 } from "./slideData";
@@ -70,19 +70,18 @@ const HANDLE_CURSOR: Record<ResizeHandle, string> = {
 };
 
 /** 도형별 꼭짓점. 100x100 기준으로 그리고 상자 크기에 맞춰 늘린다. */
-const POLYGONS: Partial<Record<ObjectType, string>> = {
-  triangle: "50,3 97,97 3,97",
-  diamond: "50,3 97,50 50,97 3,50",
-  pentagon: "50,3 97,38 78,96 22,96 3,38",
-  star: "50,3 61,37 97,37 68,58 79,93 50,71 21,93 32,58 3,37 39,37",
-};
-
-/** 물체 하나를 그린다. 크기는 부모가 정하고, 여기서는 안쪽 모양만 그린다. */
+/**
+ * 물체 하나를 그린다. 크기는 부모가 정하고, 여기서는 안쪽 모양만 그린다.
+ *
+ * 모양은 손으로 적지 않고 shapes.ts 의 표에서 꺼내 쓴다.
+ * 도형을 더 넣고 싶으면 그 표에만 한 줄 추가하면 되고 여기는 안 건드려도 된다.
+ */
 export function ShapeView({ object }: { object: SlideObject }) {
   const { type, fill, stroke, strokeWidth, w, h } = object;
+  const def = SHAPE_BY_NAME[type];
 
-  // 네모류는 요소 자체로 그리는 게 선명하다.
-  if (type === "rect" || type === "roundRect" || type === "ellipse") {
+  // 네모·원은 요소 자체로 그리는 게 테두리가 선명하다.
+  if (def?.render === "css") {
     return (
       <div
         className="w-full h-full"
@@ -96,43 +95,41 @@ export function ShapeView({ object }: { object: SlideObject }) {
     );
   }
 
-  // 다각형
-  const points = POLYGONS[type];
-  if (points) {
+  if (def?.render === "polygon" || def?.render === "path") {
+    /*
+     * 상자를 늘려도 테두리 굵기는 그대로여야 해서 non-scaling-stroke 를 쓴다.
+     * 안 그러면 납작한 도형의 테두리가 위아래로 눌려 찌그러져 보인다.
+     */
+    const common = {
+      fill,
+      stroke,
+      strokeWidth,
+      strokeLinejoin: "round" as const,
+      vectorEffect: "non-scaling-stroke" as const,
+    };
     return (
       <svg
         className="w-full h-full"
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
       >
-        <polygon
-          points={points}
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-    );
-  }
-
-  // 말풍선
-  if (type === "speech") {
-    return (
-      <svg
-        className="w-full h-full"
-        viewBox="0 0 100 100"
-        preserveAspectRatio="none"
-      >
-        <path
-          d="M8 6 H92 A6 6 0 0 1 98 12 V70 A6 6 0 0 1 92 76 H40 L24 96 V76 H8 A6 6 0 0 1 2 70 V12 A6 6 0 0 1 8 6 Z"
-          fill={fill}
-          stroke={stroke}
-          strokeWidth={strokeWidth}
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
+        {def.render === "polygon" ? (
+          <polygon points={def.points} {...common} />
+        ) : (
+          <path d={def.path} {...common} />
+        )}
+        {/* 원통 윗면이나 정육면체 모서리처럼, 실루엣만으로는 안 보이는 선 */}
+        {def.detail && (
+          <path
+            d={def.detail}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        )}
       </svg>
     );
   }
@@ -421,14 +418,47 @@ export default function SlideCanvas({
     }
     if (handle.includes("s")) h = o.h + ldy;
 
-    // 뒤집히지 않게 최소 크기를 지킨다.
-    if (w < 20) {
-      if (handle.includes("w")) x = o.x + o.w - 20;
-      w = 20;
-    }
-    if (h < 20) {
-      if (handle.includes("n")) y = o.y + o.h - 20;
-      h = 20;
+    /*
+     * Shift 를 누르고 있으면 원래 가로세로 비율을 지킨다.
+     * 모서리를 끌면 더 많이 끈 쪽을 기준으로 삼고,
+     * 한 변만 끌면 그 변에 맞춰 나머지가 따라온다.
+     * (회전 손잡이도 Shift 로 15도씩 끊기므로 같은 키로 맞췄다.)
+     */
+    if (e.shiftKey && o.w > 0 && o.h > 0) {
+      const ratio = o.w / o.h;
+
+      if (handle === "n" || handle === "s") {
+        w = h * ratio;
+      } else if (handle === "e" || handle === "w") {
+        h = w / ratio;
+      } else if (Math.abs(w - o.w) >= Math.abs(h - o.h)) {
+        h = w / ratio;
+      } else {
+        w = h * ratio;
+      }
+
+      /*
+       * 최소 크기를 지키되 비율은 깨지 않는다.
+       * 가로세로를 따로 자르면 비율이 틀어지므로, 작은 쪽에 맞춰 둘 다 키운다.
+       */
+      w = Math.max(w, 20);
+      h = Math.max(h, 20);
+      if (w / h > ratio) h = w / ratio;
+      else w = h * ratio;
+
+      // 잡지 않은 반대쪽 모서리는 제자리에 있어야 한다.
+      if (handle.includes("w")) x = o.x + o.w - w;
+      if (handle.includes("n")) y = o.y + o.h - h;
+    } else {
+      // 뒤집히지 않게 최소 크기를 지킨다.
+      if (w < 20) {
+        if (handle.includes("w")) x = o.x + o.w - 20;
+        w = 20;
+      }
+      if (h < 20) {
+        if (handle.includes("n")) y = o.y + o.h - 20;
+        h = 20;
+      }
     }
 
     write(() =>
@@ -601,6 +631,7 @@ export default function SlideCanvas({
                         <div
                           key={handle}
                           onPointerDown={(e) => handleResizePointerDown(e, handle, object)}
+                          title="끌어서 크기 조절 · Shift 를 누르면 비율 고정"
                           className="absolute w-2.5 h-2.5 bg-white border-2 border-[#4457B4] rounded-sm"
                           style={{
                             left: isLeft ? -5 : isRight ? "calc(100% - 5px)" : "calc(50% - 5px)",
