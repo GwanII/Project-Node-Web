@@ -84,7 +84,7 @@ export default function ResetPasswordPage() {
         hashError ||
         hashErrorCode
       ) {
-        sessionStorage.removeItem("passwordRecovery");
+        localStorage.removeItem("passwordRecovery");
 
         if (mounted) {
           setIsRecoveryValid(false);
@@ -95,14 +95,16 @@ export default function ResetPasswordPage() {
       }
 
       /*
-        새로고침한 경우
-
         이전에 PASSWORD_RECOVERY 이벤트가 발생해서
-        sessionStorage에 복구 상태가 저장되어 있고,
+        localStorage에 복구 상태가 저장되어 있고,
         Supabase 세션도 존재하면 계속 허용합니다.
+
+        localStorage는 브라우저 창을 닫아도 유지되므로
+        같은 브라우저에서 다시 /reset-password에 접근하면
+        복구 세션이 남아 있는 동안 재설정을 계속할 수 있습니다.
       */
       const recoveryStored =
-        sessionStorage.getItem("passwordRecovery") === "true";
+        localStorage.getItem("passwordRecovery") === "true";
 
       if (recoveryStored) {
         const {
@@ -119,7 +121,7 @@ export default function ResetPasswordPage() {
         }
 
         // 복구 상태는 저장되어 있지만 세션이 없는 경우 제거
-        sessionStorage.removeItem("passwordRecovery");
+        localStorage.removeItem("passwordRecovery");
       }
     };
 
@@ -135,7 +137,7 @@ export default function ResetPasswordPage() {
       console.log("Auth 이벤트:", event);
 
       if (event === "PASSWORD_RECOVERY" && session) {
-        sessionStorage.setItem("passwordRecovery", "true");
+        localStorage.setItem("passwordRecovery", "true");
 
         if (mounted) {
           setIsRecoveryValid(true);
@@ -153,7 +155,7 @@ export default function ResetPasswordPage() {
     */
     const timer = setTimeout(() => {
       const recoveryStored =
-        sessionStorage.getItem("passwordRecovery") === "true";
+        localStorage.getItem("passwordRecovery") === "true";
 
       if (!recoveryStored && mounted) {
         setIsRecoveryValid(false);
@@ -211,9 +213,9 @@ export default function ResetPasswordPage() {
 
     /*
       비밀번호 변경이 완료되었으므로
-      현재 탭에 저장한 복구 상태를 제거합니다.
+      저장해 둔 복구 상태를 제거합니다.
     */
-    sessionStorage.removeItem("passwordRecovery");
+    localStorage.removeItem("passwordRecovery");
 
     /*
       재설정 과정에서 생성된 Supabase 세션도 종료합니다.

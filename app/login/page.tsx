@@ -3,11 +3,15 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/src/lib/supabase";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // 비밀번호 표시 여부
+  const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
 
@@ -25,6 +29,24 @@ export default function LoginPage() {
 
   const isLoginDisabled =
     loading || email.trim() === "" || password.trim() === "";
+
+  // 휴대폰 번호 자동 하이픈
+  const formatPhoneNumber = (value: string) => {
+    const numbers = value.replace(/\D/g, "").slice(0, 11);
+
+    if (numbers.length <= 3) {
+      return numbers;
+    }
+
+    if (numbers.length <= 7) {
+      return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
+    }
+
+    return `${numbers.slice(0, 3)}-${numbers.slice(
+      3,
+      7
+    )}-${numbers.slice(7)}`;
+  };
 
   // Google OAuth callback에서 /login?oauth=success 로 돌아온 경우
   // 현재 로그인된 사용자의 휴대폰 인증 여부 확인
@@ -184,11 +206,10 @@ export default function LoginPage() {
 
     console.log("OTP 인증 성공:", data);
     alert("휴대폰 인증이 완료되었습니다.");
-    
-    // OTP 검증 성공
+
     router.push("/mainpage");
   };
-  
+
   // Google OAuth
   const handleGoogleLogin = async () => {
     const { error } = await supabase.auth.signInWithOAuth({
@@ -220,7 +241,6 @@ export default function LoginPage() {
       {/* 오른쪽 로그인 영역 */}
       <section className="relative flex w-2/5 items-center justify-center bg-gray-100">
         <div className="flex h-[60vh] w-[80%] max-w-[570px] flex-col rounded-[28px] border border-gray-300 bg-white px-10 py-10">
-
           {!showPhoneVerification ? (
             <>
               {/* 로그인 화면 */}
@@ -238,13 +258,31 @@ export default function LoginPage() {
                   className="mb-3 w-full rounded border border-gray-300 px-4 py-3 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
                 />
 
-                <input
-                  type="password"
-                  placeholder="비밀번호를 입력해 주세요"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded border border-gray-300 px-4 py-3 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
-                />
+                {/* 비밀번호 */}
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    placeholder="비밀번호를 입력해 주세요"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full rounded border border-gray-300 px-4 py-3 pr-12 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    aria-label={
+                      showPassword ? "비밀번호 숨기기" : "비밀번호 보기"
+                    }
+                  >
+                    {showPassword ? (
+                      <EyeOff size={20} />
+                    ) : (
+                      <Eye size={20} />
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* 버튼 영역 */}
@@ -267,84 +305,90 @@ export default function LoginPage() {
               </div>
 
               {/* SNS 영역 */}
-              <div className="mt-8">
-                <p className="text-center text-sm text-gray-600">
-                  SNS 계정으로 간편하게 시작하기
-                </p>
+              <div className="mt-6">
+                {/* 구분선 + 설명 */}
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-gray-200" />
 
+                  <p className="shrink-0 text-sm text-gray-400">
+                    SNS 계정으로 간편하게 시작하기
+                  </p>
+
+                  <div className="h-px flex-1 bg-gray-200" />
+                </div>
+
+                {/* SNS 버튼 */}
                 <div className="mt-3 flex justify-center gap-4">
                   {/* Google */}
                   <button
                     type="button"
                     onClick={handleGoogleLogin}
-                    className="flex h-[5vh] w-[5vh] min-h-[48px] min-w-[48px] max-h-[60px] max-w-[60px] items-center justify-center rounded-xl border border-gray-300 bg-white"
+                    className="flex h-14 w-14 items-center justify-center rounded-4xl border border-transparent transition duration-200 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm"
+                    aria-label="Google 로그인"
                   >
                     <img
-                      src="/login/icon/google.png"
-                      alt="google"
-                      className="h-[65%] w-[65%] object-contain"
-                    />
-                  </button>
-
-                  {/* Kakao */}
-                  <button
-                    type="button"
-                    className="flex h-[5vh] w-[5vh] min-h-[48px] min-w-[48px] max-h-[60px] max-w-[60px] items-center justify-center rounded-xl border border-yellow-300 bg-yellow-300"
-                  >
-                    <img
-                      src="/login/icon/kakao.png"
-                      alt="kakao"
-                      className="h-[65%] w-[65%] object-contain"
+                      src="/login/icon/Google.svg"
+                      alt="Google"
+                      className="h-13 w-13 object-contain"
                     />
                   </button>
 
                   {/* GitHub */}
                   <button
                     type="button"
-                    className="flex h-[5vh] w-[5vh] min-h-[48px] min-w-[48px] max-h-[60px] max-w-[60px] items-center justify-center rounded-xl border border-gray-900 bg-gray-900"
+                    className="flex h-14 w-14 items-center justify-center rounded-4xl border border-transparent transition duration-200 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm"
+                    aria-label="GitHub 로그인"
                   >
                     <img
-                      src="/login/icon/github.png"
-                      alt="github"
-                      className="h-[65%] w-[65%] object-contain"
+                      src="/login/icon/Github.svg"
+                      alt="GitHub"
+                      className="h-15 w-15 scale-120 object-contain"
                     />
                   </button>
 
                   {/* Facebook */}
                   <button
                     type="button"
-                    className="flex h-[5vh] w-[5vh] min-h-[48px] min-w-[48px] max-h-[60px] max-w-[60px] items-center justify-center rounded-xl border border-blue-500 bg-blue-500"
+                    className="flex h-14 w-14 items-center justify-center rounded-4xl border border-transparent transition duration-200 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm"
+                    aria-label="Facebook 로그인"
                   >
                     <img
-                      src="/login/icon/facebook.png"
-                      alt="facebook"
-                      className="h-[65%] w-[65%] object-contain"
+                      src="/login/icon/Facebook.png"
+                      alt="Facebook"
+                      className="h-12.5 w-12.5 object-contain"
                     />
                   </button>
 
                   {/* Naver */}
                   <button
                     type="button"
-                    className="flex h-[5vh] w-[5vh] min-h-[48px] min-w-[48px] max-h-[60px] max-w-[60px] items-center justify-center rounded-xl border border-green-500 bg-green-500"
+                    className="flex h-14 w-14 items-center justify-center rounded-4xl border border-transparent transition duration-200 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm"
+                    aria-label="Naver 로그인"
                   >
                     <img
-                      src="/login/icon/naver.png"
-                      alt="naver"
-                      className="h-[65%] w-[65%] object-contain"
+                      src="/login/icon/Naver.png"
+                      alt="Naver"
+                      className="h-13 w-13 object-contain"
                     />
                   </button>
                 </div>
               </div>
 
               {/* 카드 아래쪽 */}
-              <div className="mt-6 flex justify-end gap-1 text-sm text-gray-400">
-                <Link href="/find-account" className="hover:text-gray-600">
+              <div className="mt-4 flex justify-end gap-1 text-sm text-gray-400">
+                <Link
+                  href="/find-account"
+                  className="hover:text-gray-600"
+                >
                   계정 찾기
                 </Link>
 
                 <span>/</span>
 
-                <Link href="/forgot-password" className="hover:text-gray-600">
+                <Link
+                  href="/forgot-password"
+                  className="hover:text-gray-600"
+                >
                   비밀번호 찾기
                 </Link>
               </div>
@@ -369,10 +413,14 @@ export default function LoginPage() {
                 <div className="flex gap-2">
                   <input
                     type="tel"
+                    inputMode="numeric"
                     value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
+                    onChange={(e) =>
+                      setPhone(formatPhoneNumber(e.target.value))
+                    }
                     disabled={otpSent}
                     placeholder="010-1234-5678"
+                    maxLength={13}
                     className="min-w-0 flex-1 rounded border border-gray-300 px-4 py-3 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500 disabled:bg-gray-100"
                   />
 
@@ -417,10 +465,7 @@ export default function LoginPage() {
                   <button
                     type="button"
                     onClick={handleVerifyOtp}
-                    disabled={
-                      phoneLoading ||
-                      otp.length !== 6
-                    }
+                    disabled={phoneLoading || otp.length !== 6}
                     className="mt-4 w-full rounded bg-gray-900 py-3 text-lg font-bold text-white disabled:cursor-not-allowed disabled:bg-gray-500 disabled:opacity-60"
                   >
                     {phoneLoading ? "인증 중..." : "인증 완료"}

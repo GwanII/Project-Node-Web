@@ -11,6 +11,7 @@ export async function POST(request: Request) {
 
     const phone = normalizeKoreanPhone(body.phone ?? "");
     const purpose = body.purpose;
+    const turnstileToken = body.turnstileToken;
 
     // 현재는 계정 찾기 용도만 허용
     if (purpose !== "account-recovery") {
@@ -29,6 +30,92 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: "올바른 휴대폰 번호를 입력해 주세요.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+      CAPTCHA 토큰이 없는 요청은 차단합니다.
+
+      브라우저에서 버튼을 비활성화하는 것만으로는
+      API 직접 호출을 막을 수 없기 때문에
+      서버에서도 반드시 확인합니다.
+    */
+    if (
+      !turnstileToken ||
+      typeof turnstileToken !== "string"
+    ) {
+      return NextResponse.json(
+        {
+          error: "CAPTCHA 인증을 완료해 주세요.",
+        },
+        {
+          status: 400,
+        }
+      );
+    }
+
+    /*
+      Cloudflare Turnstile Secret Key 확인
+
+      Secret Key는 서버에서만 사용하며
+      브라우저에는 노출하지 않습니다.
+    */
+    const turnstileSecretKey =
+      process.env.TURNSTILE_SECRET_KEY;
+
+    if (!turnstileSecretKey) {
+      console.error(
+        "TURNSTILE_SECRET_KEY가 설정되지 않았습니다."
+      );
+
+      return NextResponse.json(
+        {
+          error: "인증번호 발송 중 오류가 발생했습니다.",
+        },
+        {
+          status: 500,
+        }
+      );
+    }
+
+    /*
+      Cloudflare Siteverify API를 이용해
+      브라우저에서 받은 Turnstile 토큰을 검증합니다.
+
+      CAPTCHA 검증이 성공해야만
+      이후의 DB 조회와 Vonage 발송으로 진행합니다.
+    */
+    const formData = new FormData();
+
+    formData.append(
+      "secret",
+      turnstileSecretKey
+    );
+
+    formData.append(
+      "response",
+      turnstileToken
+    );
+
+    const turnstileResponse = await fetch(
+      "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    const turnstileResult =
+      await turnstileResponse.json();
+
+    if (!turnstileResult.success) {
+      return NextResponse.json(
+        {
+          error: "CAPTCHA 인증에 실패했습니다.",
         },
         {
           status: 400,

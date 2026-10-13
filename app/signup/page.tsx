@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { supabase } from "@/src/lib/supabase";
 import { Eye, EyeOff } from "lucide-react";
+import Turnstile from "@/src/components/Turnstile";
 
 export default function SignupPage() {
   const [name, setName] = useState("");
@@ -11,6 +11,8 @@ export default function SignupPage() {
   const [password, setPassword] = useState("");
   const [passwordCheck, setPasswordCheck] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showPasswordCheck, setShowPasswordCheck] = useState(false);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -34,18 +36,28 @@ export default function SignupPage() {
 
     return "";
   };
+
   // 비밀번호를 입력하기 시작했을 때만 오류 표시
-  const passwordValidationError = password ? getPasswordError(password): "";
+  const passwordValidationError = password
+    ? getPasswordError(password)
+    : "";
 
   const handleSignup = async () => {
     setMessage("");
+
     // 1. 빈 값 확인
     if (!name || !email || !password || !passwordCheck) {
       setMessage("모든 항목을 입력해 주세요.");
       return;
     }
 
-    // 2. 이메일 형식 확인
+    // 2. CAPTCHA 확인
+    if (!turnstileToken) {
+      setMessage("CAPTCHA 인증을 완료해 주세요.");
+      return;
+    }
+
+    // 3. 이메일 형식 확인
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!emailRegex.test(email)) {
@@ -53,7 +65,7 @@ export default function SignupPage() {
       return;
     }
 
-    // 3. 비밀번호 형식 확인
+    // 4. 비밀번호 형식 확인
     const passwordValidationError = getPasswordError(password);
 
     if (passwordValidationError) {
@@ -61,46 +73,52 @@ export default function SignupPage() {
       return;
     }
 
-    // 4. 비밀번호 일치 확인
+    // 5. 비밀번호 일치 확인
     if (password !== passwordCheck) {
       setMessage("비밀번호가 일치하지 않습니다.");
       return;
     }
-    // 5. 중복 요청 방지
+
+    // 6. 중복 요청 방지
     if (loading) {
       return;
     }
 
     setLoading(true);
 
-    // 6. Supabase 회원가입 요청
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        emailRedirectTo: `${window.location.origin}/login`,
-
-        data: {
-          name,
+    try {
+      // 7. Next.js 서버에 회원가입 요청
+      const response = await fetch("/api/signup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      },
-    });
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          turnstileToken,
+        }),
+      });
 
-    setLoading(false);
+      const result = await response.json();
 
-    // 7. 오류 처리
-    if (error) {
+      // 8. 서버에서 오류가 반환된 경우
+      if (!response.ok) {
+        setMessage(result.error || "회원가입에 실패했습니다.");
+        return;
+      }
+
+      // 9. 회원가입 성공
+      setMessage(
+        "회원가입 요청이 완료되었습니다. 이메일에서 인증 링크를 확인해 주세요.",
+      );
+    } catch (error) {
       console.error(error);
-      setMessage(error.message);
-      return;
+      setMessage("회원가입 처리 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
     }
-
-    console.log(data);
-
-    // 8. 이메일 인증 안내
-    setMessage(
-      "회원가입 요청이 완료되었습니다. 이메일에서 인증 링크를 확인해 주세요.",
-    );
   };
 
   return (
@@ -172,9 +190,15 @@ export default function SignupPage() {
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 hover:text-gray-600"
-                aria-label={showPassword ? "비밀번호 숨기기" : "비밀번호 보기"}
+                aria-label={
+                  showPassword ? "비밀번호 숨기기" : "비밀번호 보기"
+                }
               >
-                {showPassword ? (<EyeOff size={20} />) : (<Eye size={20} />)}
+                {showPassword ? (
+                  <EyeOff size={20} />
+                ) : (
+                  <Eye size={20} />
+                )}
               </button>
             </div>
 
@@ -191,12 +215,39 @@ export default function SignupPage() {
               비밀번호 확인
             </label>
 
-            <input
-              type="password"
-              value={passwordCheck}
-              onChange={(e) => setPasswordCheck(e.target.value)}
-              placeholder="비밀번호를 다시 입력해 주세요"
-              className="w-full rounded border border-gray-300 px-4 py-3 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
+            <div className="relative">
+              <input
+                type={showPasswordCheck ? "text" : "password"}
+                value={passwordCheck}
+                onChange={(e) => setPasswordCheck(e.target.value)}
+                placeholder="비밀번호를 다시 입력해 주세요"
+                className="w-full rounded border border-gray-300 px-4 py-3 text-gray-800 outline-none placeholder:text-gray-400 focus:border-gray-500"
+              />
+
+              <button
+                type="button"
+                onClick={() => setShowPasswordCheck(!showPasswordCheck)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-gray-400 hover:text-gray-600"
+                aria-label={
+                  showPasswordCheck
+                    ? "비밀번호 숨기기"
+                    : "비밀번호 보기"
+                }
+              >
+                {showPasswordCheck ? (
+                  <EyeOff size={20} />
+                ) : (
+                  <Eye size={20} />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* CAPTCHA */}
+          <div className="mt-4 flex justify-center">
+            <Turnstile
+              onSuccess={(token) => setTurnstileToken(token)}
+              onExpire={() => setTurnstileToken(null)}
             />
           </div>
 
@@ -216,7 +267,8 @@ export default function SignupPage() {
               !name ||
               !email ||
               !password ||
-              !passwordCheck
+              !passwordCheck ||
+              !turnstileToken
             }
             className="mt-6 w-full rounded bg-blue-500 py-3 text-lg font-bold text-white hover:bg-blue-600 disabled:cursor-not-allowed disabled:bg-gray-400"
           >
