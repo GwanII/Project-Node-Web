@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, ReactNode } from "react";
+import { useState, ReactNode, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Image from "next/image";
 import { Search, Flag, Trophy, BookOpen, Plus } from "lucide-react";
@@ -41,7 +41,7 @@ const TEMPLATE: Template[] = [
   }
 ];
 
-export default function NewTemplatePage() {
+function NewTemplatePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
@@ -339,5 +339,13 @@ export default function NewTemplatePage() {
 
       </div>
     </div>
+  );
+}
+
+export default function NewTemplatePage() {
+  return (
+    <Suspense fallback={null}>
+      <NewTemplatePageInner />
+    </Suspense>
   );
 }
