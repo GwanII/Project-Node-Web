@@ -10,7 +10,58 @@ const OLLAMA_MODEL = process.env.NEXT_PUBLIC_OLLAMA_MODEL ?? "qwen2.5:7b";
 
 // ── 업로드 파일에서 텍스트 추출 ──
 const MAX_CHARS_PER_FILE = 3000;   // 파일당 AI에 넘길 최대 글자 수
-const MAX_FILES_TO_READ   = 5;     // 최대 몇 개 파일까지 읽을지
+const MAX_FILES_TO_READ   = 5;
+const MAX_IMAGES_IN_REPORT = 6;
+
+// files.name 에는 확장자가 없을 수 있어요(URL 링크, 이름만 저장된 경우).
+// storage_path 를 먼저 보고, 없으면 name 을 봅니다.
+function extOf(f: { name?: string; storage_path?: string }): string {
+  const src = f.storage_path || f.name || "";
+  const m = src.toLowerCase().match(/\.([a-z0-9]+)(?:\?.*)?$/);
+  return m ? m[1] : "";
+}
+const TEXTLIKE_EXT = ["pdf", "txt", "md", "csv", "json", "pptx", "docx"];
+
+// sheet_items 의 컬럼 이름이 팀마다 다를 수 있어서, 있을 법한 이름을 모두 확인합니다.
+type MeetingRow = { name?: string; content?: string } & Record<string, unknown>;
+
+const PROJECT_ID_KEYS   = ["project_id", "projectId", "projectdata_id", "project"];
+const PROJECT_NAME_KEYS = ["project_name", "projectName", "project_title", "projectdata_name"];
+
+function firstValue(row: MeetingRow, keys: string[]): string | null {
+  for (const k of keys) {
+    const v = row[k];
+    if (v !== null && v !== undefined && String(v).trim() !== "") return String(v).trim();
+  }
+  return null;
+}
+const projectIdOf   = (row: MeetingRow) => firstValue(row, PROJECT_ID_KEYS);
+const projectNameOf = (row: MeetingRow) => firstValue(row, PROJECT_NAME_KEYS);
+
+// "예비 1" / "예비1" / "예비1 " 을 같은 것으로 봅니다.
+const normName = (v: string | null | undefined) =>
+  (v ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+const sameName = (a: string | null | undefined, b: string | null | undefined) =>
+  normName(a) !== "" && normName(a) === normName(b);
+const IMAGE_EXT    = ["png", "jpg", "jpeg", "gif", "webp"];
+
+// 모델이 가끔 중국어 한자를 섞어서 내놓아요. 한자가 든 태그는 버립니다.
+const HANZI = /[\u4e00-\u9fff]/;
+const FALLBACK_TAGS = ["#UIUX", "#디자인시스템", "#협업", "#프로토타입", "#프로젝트관리"];
+
+function sanitizeTags(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw.map(String).map(t => t.trim()).filter(Boolean) : [];
+  const clean = list.filter(t => !HANZI.test(t));
+  if (clean.length < list.length) {
+    console.warn("🈲 한자가 섞인 태그를 제거했어요:", list.filter(t => HANZI.test(t)));
+  }
+  // 걸러내고 너무 적게 남으면 기본 태그로 채우기
+  for (const f of FALLBACK_TAGS) {
+    if (clean.length >= 5) break;
+    if (!clean.includes(f)) clean.push(f);
+  }
+  return clean.slice(0, 5);
+}     // 최대 몇 개 파일까지 읽을지
 
 async function extractPdfText(blob: Blob): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
@@ -25,22 +76,54 @@ async function extractPdfText(blob: Blob): Promise<string> {
   for (let i = 1; i <= pages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((it: { str?: string }) => it.str ?? "").join(" ") + "\n";
+    text += content.items.map((it) => ("str" in it ? (it.str ?? "") : "")).join(" ") + "\n";
+    if (text.length > MAX_CHARS_PER_FILE) break;
+  }
+  return text.slice(0, MAX_CHARS_PER_FILE);
+}
+
+// pptx·docx 는 사실 zip 파일이에요. 안의 XML에서 글자만 긁어옵니다.
+async function extractOoxmlText(blob: Blob, kind: "pptx" | "docx"): Promise<string> {
+  const JSZip = (await import("jszip")).default;
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+
+  const entries = kind === "pptx"
+    ? Object.keys(zip.files)
+        .filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+        .sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]))
+    : ["word/document.xml"];
+
+  const tag = kind === "pptx" ? "a:t" : "w:t";
+  const re = new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, "g");
+
+  let text = "";
+  for (const entry of entries) {
+    const file = zip.files[entry];
+    if (!file) continue;
+    const xml = await file.async("string");
+    const chunks: string[] = [];
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(xml)) !== null) chunks.push(m[1]);
+    const joined = chunks.join(" ").replace(/\s+/g, " ").trim();
+    if (joined) text += joined + "\n";
     if (text.length > MAX_CHARS_PER_FILE) break;
   }
   return text.slice(0, MAX_CHARS_PER_FILE);
 }
 
 async function readFileContent(storagePath: string, fileName: string): Promise<string | null> {
-  const lower = fileName.toLowerCase();
-  const isPdf  = lower.endsWith(".pdf");
-  const isText = /\.(txt|md|csv|json)$/.test(lower);
-  if (!isPdf && !isText) return null;
+  const ext = extOf({ name: fileName, storage_path: storagePath });
+  const isPdf   = ext === "pdf";
+  const isOoxml = ext === "pptx" || ext === "docx";
+  const isText  = ["txt", "md", "csv", "json"].includes(ext);
+  if (!isPdf && !isOoxml && !isText) return null;
 
   try {
     const { data } = await supabase.storage.from("cobalt-files").download(storagePath);
     if (!data) return null;
-    if (isPdf) return await extractPdfText(data);
+    if (isPdf)   return await extractPdfText(data);
+    if (isOoxml) return await extractOoxmlText(data, ext as "pptx" | "docx");
     return (await data.text()).slice(0, MAX_CHARS_PER_FILE);
   } catch (e) {
     console.warn("파일 읽기 실패:", fileName, e);
@@ -81,6 +164,29 @@ const PERFORMANCE = [
 ];
 
 type Todo = { id: string; text: string; done: boolean; week?: string; project?: string; projectPath?: string };
+
+type ReportImage = { name: string; url: string };
+
+type ReportResult = {
+  summary: string;
+  achievements: string[];
+  coverLetter: string;
+  tags: string[];
+  pct: number;
+  doneCnt: number;
+  pendingCnt: number;
+  total: number;
+  images?: ReportImage[];          // 회의록 사진·산출물 썸네일
+  evidenceMeetings?: string[];     // 분석에 사용한 회의록 제목
+  evidenceFiles?: string[];        // 분석에 사용한 문서 이름
+};
+
+type ReportRow = {
+  id: string;
+  project_name: string;
+  created_at: string;
+  result: ReportResult;
+};
 
 // 이번 주 월~일 범위 계산
 function thisWeekRange() {
@@ -126,9 +232,11 @@ function EditableField({ label, value, onChange }: { label: string; value: strin
   );
 }
 
-function TodoRow({ todo, onToggle }: { todo: Todo; onToggle: () => void }) {
+function TodoRow({ todo, onToggle, onDelete }: { todo: Todo; onToggle: () => void; onDelete?: () => void }) {
+  const [hover, setHover] = useState(false);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}
+         onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <button onClick={onToggle} style={{ width: 20, height: 20, borderRadius: 4, flexShrink: 0, padding: 0, cursor: "pointer", border: `2px solid ${todo.done ? COLOR.point : COLOR.gray400}`, background: todo.done ? COLOR.point : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
         {todo.done && <span style={{ color: "#fff", fontSize: 12, lineHeight: 1 }}>✓</span>}
       </button>
@@ -138,25 +246,25 @@ function TodoRow({ todo, onToggle }: { todo: Todo; onToggle: () => void }) {
           {todo.project} ›
         </Link>
       )}
+      {onDelete && (
+        <button onClick={onDelete} title="삭제"
+          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: "none", cursor: "pointer",
+                   background: "transparent", color: COLOR.gray400, fontSize: 14, lineHeight: 1,
+                   opacity: hover ? 1 : 0, transition: "opacity .15s" }}>×</button>
+      )}
     </div>
   );
 }
 
 export default function ProfilePage() {
   const [todos, setTodos]             = useState<Todo[]>([]);
+  const [newTodo, setNewTodo]         = useState("");
   const [showAll, setShowAll]         = useState(false);
+  const [reportHistory, setReportHistory] = useState<ReportRow[]>([]);
+  const [showHistory, setShowHistory]     = useState(false);
   const [showReport, setShowReport]   = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
-  const [geminiResult, setGeminiResult]   = useState<{
-    summary: string;
-    achievements: string[];
-    coverLetter: string;
-    tags: string[];
-    pct: number;
-    doneCnt: number;
-    pendingCnt: number;
-    total: number;
-  } | null>(null);
+  const [geminiResult, setGeminiResult]   = useState<ReportResult | null>(null);
   const [showEdit, setShowEdit]       = useState(false);
   const [showPwChange, setShowPwChange]   = useState(false);
   const [currentPw, setCurrentPw]         = useState("");
@@ -246,6 +354,17 @@ export default function ProfilePage() {
       });
       setTodos(list);
     }
+
+    // 저장된 AI 리포트 히스토리 불러오기
+    const { data: reportRows, error: reportErr } = await supabase
+      .from("ai_reports")
+      .select("id, project_name, created_at, result")
+      .eq("user_id", authId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (reportErr) console.warn("리포트 히스토리 불러오기 실패:", reportErr.message);
+    else if (reportRows) setReportHistory(reportRows as unknown as ReportRow[]);
   }, []);
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
@@ -303,6 +422,103 @@ export default function ProfilePage() {
     setCurrentPw(""); setNewPw(""); setNewPwConfirm(""); setShowPwChange(false);
   };
 
+  // ── 생성된 리포트를 DB에 저장 ──
+  const saveReport = async (result: ReportResult) => {
+    const authId = await getAuthId();
+    if (!authId) return;
+    const { data, error } = await supabase.from("ai_reports").insert({
+      user_id: authId,
+      project_name: selectedProject.name,
+      result,
+    }).select("id, project_name, created_at, result").single();
+
+    if (error) { console.warn("리포트 저장 실패:", error.message); return; }
+    console.log("💾 리포트 저장 완료");
+    setReportHistory(prev => [data as unknown as ReportRow, ...prev].slice(0, 10));
+  };
+
+  // ── 리포트를 PDF로 내보내기 (브라우저 인쇄 → PDF로 저장) ──
+  const exportReportPdf = (r: ReportResult, projectName: string, projectPeriod: string) => {
+    const esc = (t: string) => t.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+    const today = new Date().toLocaleDateString("ko-KR");
+    const html = `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>${esc(nickname)}_성과리포트_${esc(projectName)}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", sans-serif;
+         color: #1f2024; line-height: 1.7; margin: 0; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .meta { font-size: 12px; color: #6b6f76; margin-bottom: 18px; }
+  .rule { border: none; border-top: 2px solid #5a5ce0; margin: 0 0 18px; }
+  .stats { display: flex; gap: 8px; margin-bottom: 18px; }
+  .stat { flex: 1; border: 1px solid #e3e4e8; border-radius: 8px; padding: 10px; text-align: center; }
+  .stat b { display: block; font-size: 19px; color: #5a5ce0; }
+  .stat span { font-size: 11px; color: #6b6f76; }
+  .summary { background: #f2f2fb; border-radius: 8px; padding: 12px 14px;
+             font-weight: 600; color: #5a5ce0; text-align: center; margin-bottom: 18px; }
+  h2 { font-size: 14px; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid #e3e4e8; }
+  ul { margin: 0 0 18px; padding-left: 18px; }
+  li { font-size: 13px; margin-bottom: 7px; }
+  .letter { background: #f8f8fc; border-left: 3px solid #5a5ce0; border-radius: 0 8px 8px 0;
+            padding: 13px 15px; font-size: 13px; margin-bottom: 18px; }
+  .tags { font-size: 12px; color: #6b6f76; }
+  .gallery { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .shot { width: calc(50% - 4px); border: 1px solid #e3e4e8; border-radius: 8px;
+          overflow: hidden; page-break-inside: avoid; }
+  .shot img { width: 100%; height: 110px; object-fit: cover; display: block; }
+  .shot p { margin: 0; padding: 5px 8px; font-size: 10px; color: #6b6f76;
+            background: #f8f8fc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .evi { font-size: 11px; color: #6b6f76; margin: 0 0 18px; padding-left: 16px; }
+  .evi li { margin-bottom: 3px; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  .foot { margin-top: 26px; font-size: 10px; color: #9a9ea6; text-align: center;
+          border-top: 1px solid #e3e4e8; padding-top: 10px; }
+</style></head><body>
+<h1>${esc(nickname)} · 성과 리포트</h1>
+<div class="meta">${esc(projectName)}${projectPeriod ? " · " + esc(projectPeriod) : ""} &nbsp;|&nbsp; 생성일 ${today}</div>
+<hr class="rule">
+<div class="stats">
+  <div class="stat"><b>${r.pct}%</b><span>기여도</span></div>
+  <div class="stat"><b>${r.doneCnt}</b><span>완료 할일</span></div>
+  <div class="stat"><b>${r.pendingCnt}</b><span>미완료</span></div>
+  <div class="stat"><b>${r.total}</b><span>전체</span></div>
+</div>
+<div class="summary">${esc(r.summary)}</div>
+<h2>핵심 성과</h2>
+<ul>${r.achievements.map(a => `<li>${esc(a)}</li>`).join("")}</ul>
+<h2>자기소개서 추천 문장</h2>
+<div class="letter">${esc(r.coverLetter)}</div>
+<h2>역량 키워드</h2>
+<p class="tags">${r.tags.map(esc).join("&nbsp; · &nbsp;")}</p>
+${(r.images && r.images.length > 0) ? `
+<h2>회의 · 산출물 기록</h2>
+<div class="gallery">
+  ${r.images.map(im => `<div class="shot"><img src="${esc(im.url)}" alt=""><p>${esc(im.name)}</p></div>`).join("")}
+</div>` : ""}
+${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && r.evidenceFiles.length > 0)) ? `
+<h2>분석에 사용한 근거 자료</h2>
+<ul class="evi">
+  ${(r.evidenceMeetings ?? []).map(m => `<li>회의록 — ${esc(m)}</li>`).join("")}
+  ${(r.evidenceFiles ?? []).map(f => `<li>문서 — ${esc(f)}</li>`).join("")}
+</ul>` : ""}
+<div class="foot">Cobalt Hub — AI 성과 리포트 · 본 문서는 실제 회의록과 산출물을 근거로 자동 생성되었습니다.</div>
+</body></html>`;
+
+    const w = window.open("", "_blank", "width=860,height=1000");
+    if (!w) { alert("팝업이 차단됐어요. 주소창 오른쪽에서 팝업을 허용해주세요."); return; }
+    w.document.write(html);
+    w.document.close();
+    // 이미지가 다 뜬 뒤에 인쇄창을 열어야 사진이 빈칸으로 안 나와요
+    w.onload = () => {
+      const imgs = Array.from(w.document.images);
+      const waitAll = Promise.all(imgs.map(img => img.complete
+        ? Promise.resolve()
+        : new Promise<void>(done => { img.onload = () => done(); img.onerror = () => done(); })));
+      Promise.race([waitAll, new Promise(r => setTimeout(r, 5000))]).then(() => { w.focus(); w.print(); });
+    };
+  };
+
   // ── 로컬 LLM 리포트 생성 ──
   const generateReport = async () => {
     setReportLoading(true);
@@ -317,32 +533,119 @@ export default function ProfilePage() {
       // 1. DB 데이터 수집
       const [{ data: profileData }, { data: filesData }, { data: meetingData }, { data: projectData }] = await Promise.all([
         supabase.from("profiles").select("name, nickname").eq("id", authId ?? "").maybeSingle(),
-        supabase.from("files").select("name, type, created_at, storage_path").eq("uploader", nickname),
-        supabase.from("sheet_items").select("name, section, content, project_name").eq("section", "files"),
+        supabase.from("files").select("name, type, created_at, storage_path, uploader, project_id"),
+        supabase.from("sheet_items").select("*").eq("section", "files"),
         supabase.from("projectdata").select("project_name, description, start_date, end_date"),
       ]);
 
       const doneTodoList = todos.filter(t => t.done).map(t => t.text);
       const pendingTodoList = todos.filter(t => !t.done).map(t => t.text);
       // 파일 목록 + 읽을 수 있는 파일은 내용까지 추출
-      const allFiles = (filesData ?? []) as {name: string; type: string; storage_path?: string}[];
+      // files.project_id 로 이번 프로젝트 파일만 고르고, 없으면 내가 올린 파일 전체
+      const everyFile = (filesData ?? []) as {
+        name: string; type: string; storage_path?: string; uploader?: string; project_id?: string | null;
+      }[];
+      const mine        = everyFile.filter(f => f.uploader === nickname);
+      const byProjectId = selectedProject.id
+        ? everyFile.filter(f => f.project_id && String(f.project_id) === String(selectedProject.id))
+        : [];
+
+      let allFiles = everyFile;
+      let fileScope = "";
+      if (byProjectId.length > 0)  { allFiles = byProjectId; fileScope = "이 프로젝트의 파일"; }
+      else if (mine.length > 0)    { allFiles = mine;        fileScope = "내가 올린 파일 전체"; }
+      else                         { allFiles = everyFile;   fileScope = "전체 파일(매칭 실패)"; }
+      console.log(`📁 파일 기준: ${fileScope} — ${allFiles.length}개 (DB 전체 ${everyFile.length}개)`);
+
       const fileList = allFiles.map(f => `${f.name}(${f.type})`);
 
+      console.table(allFiles.map(f => ({ name: f.name, type: f.type, ext: extOf(f), storage_path: f.storage_path })));
+
       const readable = allFiles
-        .filter(f => f.storage_path && /\.(pdf|txt|md|csv|json)$/i.test(f.name))
+        .filter(f => f.storage_path && TEXTLIKE_EXT.includes(extOf(f)))
         .slice(0, MAX_FILES_TO_READ);
 
       const fileContents: string[] = [];
       for (const f of readable) {
         const text = await readFileContent(f.storage_path!, f.name);
-        if (text && text.trim()) fileContents.push(`[${f.name}]\n${text.trim()}`);
+        if (text && text.trim()) {
+          fileContents.push(`[${f.name}]\n${text.trim()}`);
+          console.log(`📄 문서 읽기 성공: ${f.name} (${text.trim().length}자)`);
+        } else {
+          console.warn(`📄 문서 읽기 실패/빈 내용: ${f.name}`);
+        }
       }
-      // 선택한 프로젝트 회의록 우선, 없으면 전체
-      const allMeetings = (meetingData ?? []) as {name: string; content?: string; project_name?: string}[];
-      const scoped = allMeetings.filter(m => m.project_name === selectedProject.name);
-      const targetMeetings = scoped.length > 0 ? scoped : allMeetings;
+      console.log(`📄 AI에 넣은 문서 ${fileContents.length}개 / 읽기 시도 ${readable.length}개 / 전체 파일 ${allFiles.length}개`);
+
+      // 회의록 사진·산출물 이미지 모으기 (리포트에 첨부)
+      const reportImages: ReportImage[] = allFiles
+        .filter(f => f.storage_path && (IMAGE_EXT.includes(extOf(f)) || f.type === "image"))
+        .slice(0, MAX_IMAGES_IN_REPORT)
+        .map(f => ({
+          name: f.name,
+          url: supabase.storage.from("cobalt-files").getPublicUrl(f.storage_path!).data.publicUrl,
+        }));
+      console.log(`🖼️ 리포트에 첨부할 이미지 ${reportImages.length}개`);
+
+      // 내 닉네임으로 잡힌 게 없으면, uploader 값이 안 맞는 건지 확인
+      if (readable.length === 0 && reportImages.length === 0) {
+        const { data: anyFiles } = await supabase
+          .from("files").select("name, type, uploader, storage_path").limit(50);
+        const rows = (anyFiles ?? []) as {name: string; type: string; uploader?: string; storage_path?: string}[];
+        const uploaders = Array.from(new Set(rows.map(r => r.uploader ?? "(없음)")));
+        console.warn(
+          `⚠️ 내 파일에서 읽을 수 있는 자료를 못 찾았어요.\n` +
+          `   현재 내 닉네임: "${nickname}"\n` +
+          `   files 테이블의 uploader 값들: ${uploaders.join(", ")}\n` +
+          `   → 위 목록에 내 닉네임이 없으면 업로더 값이 달라서 안 잡히는 거예요.`
+        );
+        console.table(rows.map(r => ({ name: r.name, type: r.type, uploader: r.uploader, ext: extOf(r) })));
+      }
+      // ── 선택한 프로젝트의 기록만 골라내기 ──
+      const allMeetingsRaw = (meetingData ?? []) as MeetingRow[];
+
+      // 같은 제목이 여러 번 있으면 내용이 가장 긴 것 하나만
+      const byTitle = new Map<string, MeetingRow>();
+      for (const m of allMeetingsRaw) {
+        const key = String(m.name ?? "").trim();
+        if (!key) continue;
+        const prev = byTitle.get(key);
+        if (!prev || (m.content?.length ?? 0) > (prev.content?.length ?? 0)) byTitle.set(key, m);
+      }
+      const allMeetings = Array.from(byTitle.values());
+
+      // 1순위: project_id 일치 → 2순위: 이름 일치(공백·대소문자 무시) → 3순위: 전체
+      const pid = selectedProject.id;
+      const byId = pid
+        ? allMeetings.filter(m => projectIdOf(m) !== null && String(projectIdOf(m)) === String(pid))
+        : [];
+      const byName = allMeetings.filter(m => sameName(projectNameOf(m), selectedProject.name));
+
+      let targetMeetings: MeetingRow[];
+      let matchedBy: string;
+      if (byId.length > 0)        { targetMeetings = byId;        matchedBy = "project_id"; }
+      else if (byName.length > 0) { targetMeetings = byName;      matchedBy = "project_name"; }
+      else                        { targetMeetings = allMeetings; matchedBy = "매칭 실패 → 전체"; }
+
+      console.log(
+        `📝 기록 ${allMeetingsRaw.length}개 → 중복 제거 ${allMeetings.length}개 → ` +
+        `분석 대상 ${targetMeetings.length}개 (기준: ${matchedBy})`
+      );
+
+      if (matchedBy.startsWith("매칭")) {
+        console.warn(
+          `⚠️ "${selectedProject.name}"(id=${pid || "없음"})에 연결된 기록을 못 찾아 전체를 사용합니다.\n` +
+          `   sheet_items 의 프로젝트 이름들: ${Array.from(new Set(allMeetings.map(m => projectNameOf(m) ?? "(없음)"))).join(", ")}\n` +
+          `   sheet_items 의 프로젝트 ID들: ${Array.from(new Set(allMeetings.map(m => String(projectIdOf(m) ?? "(없음)")))).join(", ")}\n` +
+          `   sheet_items 의 컬럼들: ${allMeetingsRaw[0] ? Object.keys(allMeetingsRaw[0]).join(", ") : "(행 없음)"}`
+        );
+      }
+
+      // 제목으로 회의록 / 문서 구분
+      const isMeetingDoc = (n?: string) => /회의|미팅|논의|스크럼|회고/.test(n ?? "");
+      const titleOf = (m: MeetingRow) => String(m.name ?? "").trim();
       const meetingList = targetMeetings.map(m =>
-        m.content ? `[${m.name}]\n${m.content}` : m.name
+        m.content ? `[${titleOf(m)}]\n${m.content}` : titleOf(m)
       );
       const projectList = (projectData ?? []).map((p: {project_name: string; start_date: string; end_date: string}) => `${p.project_name}(${p.start_date}~${p.end_date})`);
 
@@ -380,36 +683,49 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
    나쁜 예: "로그인 화면 디자인 완료"
    좋은 예: "사용자 진입 경험을 좌우하는 인증 플로우를 설계하며 입력 검증과 오류 안내 UX까지 직접 정의"
 
-2. "~했습니다", "열정을 보여주었습니다", "최선을 다했습니다" 같은 뻔한 표현을 금지합니다.
-   행동 → 판단 → 결과 순서로 서술하세요.
+2. "열정을 보여주었습니다", "최선을 다했습니다", "많은 것을 배웠습니다" 같은
+   알맹이 없는 표현을 금지합니다. 행동 → 판단 → 결과 순서로 서술하세요.
 
-3. achievements 3개는 각각 서로 다른 역량을 보여줘야 합니다.
+3. achievements 는 **반드시 정확히 3개**입니다. 1개나 2개만 쓰면 실패입니다.
+   3개는 각각 서로 다른 역량을 보여줘야 합니다.
    - 1번: 설계·구현 역량 (무엇을 어떻게 만들었는가)
    - 2번: 협업·커뮤니케이션 역량 (팀에 어떤 기여를 했는가)
    - 3번: 문제해결·주도성 (스스로 발견하고 개선한 것)
    각 항목은 70~100자로 쓰세요. "무엇을 → 어떻게 → 그래서 무엇이 달라졌는지"가 한 항목 안에 모두 들어가야 합니다.
    짧게 끊지 말고, 구체적인 명사(화면 이름, 기능 이름, 문서 이름)를 최소 2개 이상 포함하세요.
 
-4. coverLetter는 3문장으로 작성하되 이 구조를 따르세요.
-   - 1문장: 어떤 상황에서 무엇을 맡았는지 (프로젝트명, 기간, 역할 명시)
-   - 2문장: 어떤 문제를 발견하고 어떻게 해결했는지 (구체적 행동)
-   - 3문장: 그 결과 무엇이 달라졌는지 (수치 또는 변화)
-   총 400~550자. 각 문장은 충분히 길고 구체적이어야 합니다.
-   회의 기록과 산출물에서 확인되는 실제 사실(논의된 안건, 작성한 문서, 검토한 수치)을 최소 3개 이상 문장에 녹이세요.
+4. coverLetter는 문자열 하나가 아니라 **문장 4개짜리 배열**로 출력하세요.
+   각 문장은 반드시 110자 이상 160자 이하입니다. 100자 미만이면 실패입니다.
+   짧게 쓰고 끝내지 말고, 한 문장 안에 "무엇을 / 왜 / 어떻게 / 그 결과"를 모두 넣어
+   길게 이어 쓰세요. 쉼표로 절을 2~3개 연결하면 자연스럽게 길어집니다.
+   - 1번 문장(110~160자): 어떤 프로젝트에서 어떤 배경으로 무슨 역할을 맡았는지.
+     프로젝트명, 기간, 팀 규모, 본인 역할을 모두 명시하세요.
+   - 2번 문장(110~160자): 진행 중 어떤 문제·제약을 발견했는지, 그리고 그것을
+     판단한 근거가 무엇이었는지. 회의에서 논의된 안건을 근거로 드세요.
+   - 3번 문장(110~160자): 그 문제를 어떻게 해결했는지. 사용한 도구·기술·방법과
+     실제로 만든 산출물 이름을 구체적으로 쓰세요.
+   - 4번 문장(110~160자): 그래서 무엇이 달라졌는지와, 이 경험에서 얻은 역량이
+     앞으로 어떤 일에 쓰일 수 있는지.
+   4문장 전체에 회의 기록·산출물에서 확인되는 실제 사실(논의된 안건, 작성한 문서,
+   검토한 수치, 사용한 기술 이름)을 최소 4개 이상 녹이세요.
    면접관이 읽고 "이건 진짜 해본 사람이 쓴 글이다"라고 느끼도록 쓰세요.
 
 5. summary는 30~45자로, 이 사람이 무엇을 해내는 사람인지 규정하세요.
    나쁜 예: "2/4 할일을 완료했습니다"
    좋은 예: "디자인 시스템으로 팀 효율을 끌어올린 UI 설계자"
 
-6. tags는 기술 스택과 역량 키워드 5개. 할일 제목을 태그로 만들지 마세요.
+6. tags는 기술 스택과 역량 키워드 **정확히 5개**. 할일 제목을 태그로 만들지 마세요.
    나쁜 예: "#로그인화면"
    좋은 예: "#UIUX", "#디자인시스템", "#협업"
 
-8. 모든 문장은 "~했습니다" 체로 끝까지 통일하세요.
+8. 반드시 한국어로만 쓰세요. 중국어 한자(技术, 创新 등)나 영어 문장을 섞지 마세요.
+   기술 이름(Figma, Supabase, React, Whisper API)만 원문 그대로 쓸 수 있습니다.
+   태그도 모두 한국어로 쓰세요. 나쁜 예: "#技术创新" / 좋은 예: "#기술혁신"
+
+9. 모든 문장은 "~했습니다" 체로 끝까지 통일하세요.
    "~했음", "~함" 같은 개조식과 섞어 쓰지 마세요.
 
-7. 회의 기록에 이 학생의 구체적인 담당 업무나 제안이 나오면 반드시 활용하세요.
+10. 회의 기록에 이 학생의 구체적인 담당 업무나 제안이 나오면 반드시 활용하세요.
    회의에서 어떤 문제가 논의됐고, 그 결과 무엇을 맡았는지를 문장에 녹이면 설득력이 올라갑니다.
    단, 기록에 없는 내용을 지어내지 마세요. 근거가 없으면 있는 사실만 깊게 쓰세요.
 
@@ -419,36 +735,132 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
 {
   "summary": "30~45자 한 줄 규정",
   "achievements": ["설계 역량 70~100자", "협업 역량 70~100자", "주도성 70~100자"],
-  "coverLetter": "3~4문장 400~550자",
+  "coverLetter": ["1번 문장 110~160자", "2번 문장 110~160자", "3번 문장 110~160자", "4번 문장 110~160자"],
   "tags": ["#태그1", "#태그2", "#태그3", "#태그4", "#태그5"]
 }`;
 
       // 3. 로컬 LLM(Ollama) 호출
-      const res = await fetch(OLLAMA_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt,
-          stream: false,
-          format: "json",
-          options: {
-            temperature: 0.85,      // 표현을 다양하게
-            top_p: 0.92,
-            repeat_penalty: 1.15,   // 같은 말 반복 억제
-            num_predict: 2500,
-          },
-        }),
-      });
+      const callLLM = async (p: string) => {
+        const res = await fetch(OLLAMA_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: OLLAMA_MODEL,
+            prompt: p,
+            stream: false,
+            format: "json",
+            options: {
+              temperature: 0.85,      // 표현을 다양하게
+              top_p: 0.92,
+              repeat_penalty: 1.15,   // 같은 말 반복 억제
+              num_predict: 3000,
+            },
+          }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+        const raw = data.response ?? "";
+        if (!raw) throw new Error("응답이 비어있어요.");
+        return JSON.parse(raw.replace(/```json|```/g, "").trim());
+      };
 
-      const data = await res.json();
-      console.log("LLM 응답:", JSON.stringify(data));
-      if (data.error) throw new Error(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
-      const raw = data.response ?? "";
-      if (!raw) throw new Error("응답이 비어있어요.");
-      const clean = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean);
-      setGeminiResult({ ...parsed, pct: localPct, doneCnt: localDoneCnt, pendingCnt: todos.filter(t=>!t.done).length, total: todos.length });
+      const parsed = await callLLM(prompt);
+      console.log("LLM 1차 응답:", parsed);
+
+      // coverLetter가 배열로 오면 한 문단으로 합치기
+      const joinLetter = (v: unknown): string =>
+        Array.isArray(v) ? v.map(String).map(x => x.trim()).filter(Boolean).join(" ") : String(v ?? "");
+
+      let coverLetter = joinLetter(parsed.coverLetter);
+      console.log(`✍️ 자소서 1차 길이: ${coverLetter.length}자`);
+
+      // 너무 짧으면 "늘려쓰기" 2차 호출
+      if (coverLetter.length < 350) {
+        console.log("✍️ 너무 짧아서 확장 요청을 보냅니다...");
+        try {
+          const expandPrompt = `아래는 ${nickname} 학생의 자기소개 문단 초안입니다.
+
+[초안]
+${coverLetter}
+
+[참고할 수 있는 실제 근거]
+${fileContents.length > 0 ? fileContents.join("\n\n").slice(0, 2500) : "없음"}
+
+${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 2500) : "없음"}
+
+=== 할 일 ===
+초안의 내용과 사실관계는 그대로 유지하면서, 문장을 훨씬 길고 구체적으로 다시 쓰세요.
+- 반드시 4문장으로 만드세요. 각 문장은 110자 이상 160자 이하입니다.
+- 새로운 사실을 지어내지 말고, 초안과 위 근거에 있는 내용만 풀어 쓰세요.
+- 각 문장 안에 "무엇을 / 왜 / 어떻게 / 그 결과"를 모두 넣고, 쉼표로 절을 2~3개 연결해 길게 쓰세요.
+- 모든 문장은 "~했습니다" 체로 통일하세요.
+
+아래 JSON만 출력하세요.
+{ "coverLetter": ["문장1", "문장2", "문장3", "문장4"] }`;
+          const expanded = await callLLM(expandPrompt);
+          const longer = joinLetter(expanded.coverLetter);
+          console.log(`✍️ 자소서 2차 길이: ${longer.length}자`);
+          if (longer.length > coverLetter.length) coverLetter = longer;
+        } catch (e) {
+          console.warn("확장 요청 실패, 1차 결과를 사용합니다:", e);
+        }
+      }
+
+      // 핵심 성과가 3개가 아니면 다시 요청 (모델이 1~2개만 내놓을 때가 있어요)
+      let achievements: string[] = Array.isArray(parsed.achievements) ? parsed.achievements.map(String) : [];
+      console.log(`🏅 핵심 성과 1차: ${achievements.length}개`);
+
+      if (achievements.length < 3) {
+        console.log("🏅 3개가 안 돼서 다시 요청합니다...");
+        try {
+          const fixPrompt = `아래는 ${nickname} 학생의 프로젝트 기록입니다.
+
+[회의 기록]
+${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 3000) : "없음"}
+
+[산출물 내용]
+${fileContents.length > 0 ? fileContents.join("\n\n").slice(0, 2500) : "없음"}
+
+[이미 작성된 성과 ${achievements.length}개 — 이것과 겹치지 않게 쓰세요]
+${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}. ${a}`).join("\n") : "없음"}
+
+=== 할 일 ===
+핵심 성과를 **정확히 3개** 작성하세요. 2개도 4개도 안 됩니다.
+- 1번: 설계·구현 역량 (무엇을 어떻게 만들었는가)
+- 2번: 협업·커뮤니케이션 역량 (팀에 어떤 기여를 했는가)
+- 3번: 문제해결·주도성 (스스로 발견하고 개선한 것)
+각 항목은 70~100자이고, "무엇을 → 어떻게 → 그래서 무엇이 달라졌는지"가 한 항목 안에 다 들어가야 합니다.
+위 기록에 실제로 있는 내용만 쓰고, 지어내지 마세요.
+한국어로만 쓰고, 모든 문장은 "~했습니다" 체로 끝내세요.
+
+아래 JSON만 출력하세요.
+{ "achievements": ["성과1", "성과2", "성과3"] }`;
+          const fixed = await callLLM(fixPrompt);
+          const got = Array.isArray(fixed.achievements) ? fixed.achievements.map(String) : [];
+          console.log(`🏅 핵심 성과 2차: ${got.length}개`);
+          if (got.length >= achievements.length) achievements = got;
+        } catch (e) {
+          console.warn("성과 재요청 실패, 1차 결과를 사용합니다:", e);
+        }
+      }
+      achievements = achievements.filter((a: string) => a.trim()).slice(0, 3);
+
+      const result: ReportResult = {
+        summary: String(parsed.summary ?? ""),
+        achievements,
+        tags: sanitizeTags(parsed.tags),
+        coverLetter,
+        pct: localPct, doneCnt: localDoneCnt,
+        pendingCnt: todos.filter(t => !t.done).length, total: todos.length,
+        images: reportImages,
+        evidenceMeetings: targetMeetings.filter(m => isMeetingDoc(titleOf(m))).map(titleOf),
+        evidenceFiles: Array.from(new Set([
+          ...targetMeetings.filter(m => !isMeetingDoc(titleOf(m))).map(titleOf),
+          ...readable.map(f => f.name),
+        ])),
+      };
+      setGeminiResult(result);
+      await saveReport(result);
 
     } catch (err: unknown) {
       console.error("LLM 오류:", err);
@@ -482,6 +894,41 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
       setTodos(prev => prev.map(t => t.id === id ? { ...t, done: !next } : t));
     }
   };
+  const addTodo = async () => {
+    const text = newTodo.trim();
+    if (!text) return;
+    const authId = await getAuthId();
+    if (!authId) { alert("로그인이 필요해요."); return; }
+
+    // todos.due_at 은 NOT NULL 이라 반드시 넣어야 해요. 기본값은 이번 주 일요일 밤.
+    const payload: Record<string, unknown> = {
+      user_id: authId,
+      text,
+      completed: false,
+      due_at: thisWeekRange().end.toISOString(),
+    };
+    if (selectedProject.id) payload.project_id = selectedProject.id;
+
+    const { data, error } = await supabase.from("todos").insert(payload).select("id").single();
+    if (error) { alert("할 일 추가 실패: " + error.message); return; }
+
+    setTodos(prev => [...prev, {
+      id: String(data.id), text, done: false,
+      week: thisWeekRange().label,
+      project: selectedProject.id ? selectedProject.name : undefined,
+      projectPath: selectedProject.id ? "/mainpage" : undefined,
+    }]);
+    setNewTodo("");
+  };
+
+  const deleteTodo = async (id: string) => {
+    if (!confirm("이 할 일을 삭제할까요?")) return;
+    const backup = todos;
+    setTodos(prev => prev.filter(t => t.id !== id));
+    const { error } = await supabase.from("todos").delete().eq("id", id);
+    if (error) { alert("삭제 실패: " + error.message); setTodos(backup); }
+  };
+
   const pendingTodos   = todos.filter(t => !t.done);
   const doneTodos      = todos.filter(t => t.done);
   const doneCnt        = doneTodos.length;
@@ -534,15 +981,28 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
             <p style={{ margin: "0 0 12px", fontSize: 12, color: COLOR.point, fontWeight: 600, background: COLOR.mainBg, display: "inline-block", padding: "4px 12px", borderRadius: 6 }}>
               📅 {thisWeekRange().label}
             </p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <input
+                value={newTodo}
+                onChange={e => setNewTodo(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addTodo(); }}
+                placeholder="할 일을 입력하고 Enter"
+                style={{ flex: 1, border: `1px solid ${COLOR.gray200}`, borderRadius: 8, padding: "9px 12px", fontSize: 13, outline: "none" }}
+              />
+              <button onClick={addTodo} disabled={!newTodo.trim()}
+                style={{ background: newTodo.trim() ? COLOR.point : COLOR.gray200, color: "#fff", border: "none",
+                         borderRadius: 8, padding: "0 16px", fontSize: 13, fontWeight: 600,
+                         cursor: newTodo.trim() ? "pointer" : "default" }}>추가</button>
+            </div>
             {todos.length === 0 && (
               <p style={{ margin: "4px 0 0", fontSize: 13, color: COLOR.gray400 }}>
-                등록된 할 일이 없어요. 메인페이지에서 할 일을 추가해보세요.
+                등록된 할 일이 없어요. 위에 입력해서 첫 할 일을 만들어보세요.
               </p>
             )}
             {pendingTodos.length > 0 && (
               <div style={{ marginBottom: doneTodos.length > 0 ? 16 : 0, marginTop: 4 }}>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {pendingTodos.map(t => <TodoRow key={t.id} todo={t} onToggle={() => toggleTodo(t.id)} />)}
+                  {pendingTodos.map(t => <TodoRow key={t.id} todo={t} onToggle={() => toggleTodo(t.id)} onDelete={() => deleteTodo(t.id)} />)}
                 </div>
               </div>
             )}
@@ -550,7 +1010,7 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
               <div>
                 <p style={{ margin: "0 0 10px", fontSize: 12, color: COLOR.gray400, fontWeight: 600 }}>✓ 완료</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {visibleDone.map(t => <TodoRow key={t.id} todo={t} onToggle={() => toggleTodo(t.id)} />)}
+                  {visibleDone.map(t => <TodoRow key={t.id} todo={t} onToggle={() => toggleTodo(t.id)} onDelete={() => deleteTodo(t.id)} />)}
                 </div>
                 {doneTodos.length > 2 && (
                   <button onClick={() => setShowAll(!showAll)} style={{ marginTop: 12, background: "none", border: "none", color: COLOR.point, fontSize: 13, cursor: "pointer", padding: 0 }}>
@@ -587,6 +1047,36 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
             >
               {projectList.length === 0 ? "참여 중인 프로젝트가 없어요" : `${selectedProject.name} 리포트 생성하기`}
             </button>
+
+            {/* 지난 리포트 히스토리 */}
+            {reportHistory.length > 0 && (
+              <div style={{ marginTop: 14, borderTop: `1px solid ${COLOR.border}`, paddingTop: 12 }}>
+                <button onClick={() => setShowHistory(!showHistory)}
+                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLOR.point }}>
+                  🕘 지난 리포트 {reportHistory.length}개 {showHistory ? "▲" : "▼"}
+                </button>
+                {showHistory && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+                    {reportHistory.map(r => (
+                      <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, background: COLOR.white, border: `1px solid ${COLOR.border}`, borderRadius: 8, padding: "9px 12px" }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: COLOR.gray800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {r.project_name} · 기여도 {r.result?.pct ?? 0}%
+                          </p>
+                          <p style={{ margin: "2px 0 0", fontSize: 11, color: COLOR.gray400 }}>
+                            {new Date(r.created_at).toLocaleString("ko-KR", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          </p>
+                        </div>
+                        <button onClick={() => { setGeminiResult(r.result); setShowReport(true); }}
+                          style={{ flexShrink: 0, background: COLOR.mainBg, color: COLOR.point, border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>보기</button>
+                        <button onClick={() => exportReportPdf(r.result, r.project_name, "")}
+                          style={{ flexShrink: 0, background: COLOR.gray100, color: COLOR.gray600, border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, cursor: "pointer" }}>PDF</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         </div>
       </div>
@@ -640,13 +1130,43 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
                   <p style={{ margin: "0 0 8px", fontSize: 13, fontWeight: 600, color: COLOR.point }}>❝ 자소서 추천 문장</p>
                   <p style={{ margin: 0, fontSize: 13, color: COLOR.point, lineHeight: 1.7 }}>{geminiResult.coverLetter}</p>
                 </div>
+                {geminiResult.images && geminiResult.images.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 600 }}>회의 · 산출물 기록</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                      {geminiResult.images.map(im => (
+                        <a key={`${im.url}-${im.name}`} href={im.url} target="_blank" rel="noreferrer"
+                           style={{ border: `1px solid ${COLOR.gray200}`, borderRadius: 10, overflow: "hidden", textDecoration: "none", display: "block" }}>
+                          <img src={im.url} alt={im.name} style={{ width: "100%", height: 76, objectFit: "cover", display: "block", background: COLOR.gray100 }} />
+                          <p style={{ margin: 0, padding: "5px 7px", fontSize: 10, color: COLOR.gray600, background: COLOR.gray50, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{im.name}</p>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {((geminiResult.evidenceMeetings?.length ?? 0) > 0 || (geminiResult.evidenceFiles?.length ?? 0) > 0) && (
+                  <div style={{ background: COLOR.gray50, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: COLOR.gray800 }}>📎 분석에 사용한 근거 자료</p>
+                    {(geminiResult.evidenceMeetings ?? []).map((m, i) => (
+                      <p key={`m${i}-${m}`} style={{ margin: "0 0 3px", fontSize: 11, color: COLOR.gray600 }}>· 회의록 — {m}</p>
+                    ))}
+                    {(geminiResult.evidenceFiles ?? []).map((f, i) => (
+                      <p key={`f${i}-${f}`} style={{ margin: "0 0 3px", fontSize: 11, color: COLOR.gray600 }}>· 문서 — {f}</p>
+                    ))}
+                  </div>
+                )}
+
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
                   {geminiResult.tags.map(tag => (
                     <span key={tag} style={{ fontSize: 12, color: COLOR.gray600, background: COLOR.gray100, border: `1px solid ${COLOR.gray200}`, padding: "4px 10px", borderRadius: 999 }}>{tag}</span>
                   ))}
                 </div>
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                   <button onClick={() => { navigator.clipboard.writeText(geminiResult.coverLetter); alert("복사됐어요!"); }} style={{ flex: 1, background: COLOR.point, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>문장 복사</button>
+                  <button onClick={() => exportReportPdf(geminiResult, selectedProject.name, selectedProject.period)} style={{ flex: 1, background: COLOR.point, color: "#fff", border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>PDF 저장</button>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
                   <button onClick={() => { setGeminiResult(null); generateReport(); }} style={{ flex: 1, background: COLOR.gray100, color: COLOR.gray800, border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, cursor: "pointer" }}>다시 생성</button>
                   <button onClick={() => setShowReport(false)} style={{ flex: 1, background: COLOR.gray100, color: COLOR.gray600, border: "none", borderRadius: 10, padding: "11px 0", fontSize: 13, cursor: "pointer" }}>닫기</button>
                 </div>
