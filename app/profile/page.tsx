@@ -77,6 +77,7 @@ async function extractPdfText(blob: Blob): Promise<string> {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     text += content.items.map((it) => ("str" in it ? (it.str ?? "") : "")).join(" ") + "\n";
+    text += content.items.map((it) => ("str" in it ? (it.str ?? "") : "")).join(" ") + "\n";
     if (text.length > MAX_CHARS_PER_FILE) break;
   }
   return text.slice(0, MAX_CHARS_PER_FILE);
