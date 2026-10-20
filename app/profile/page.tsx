@@ -807,7 +807,7 @@ ${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 2500) : "없음"}
       }
 
       // 핵심 성과가 3개가 아니면 다시 요청 (모델이 1~2개만 내놓을 때가 있어요)
-      let achievements = Array.isArray(parsed.achievements) ? parsed.achievements.map(String) : [];
+      let achievements: string[] = Array.isArray(parsed.achievements) ? parsed.achievements.map(String) : [];
       console.log(`🏅 핵심 성과 1차: ${achievements.length}개`);
 
       if (achievements.length < 3) {
@@ -822,7 +822,7 @@ ${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 3000) : "없음"}
 ${fileContents.length > 0 ? fileContents.join("\n\n").slice(0, 2500) : "없음"}
 
 [이미 작성된 성과 ${achievements.length}개 — 이것과 겹치지 않게 쓰세요]
-${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\n") : "없음"}
+${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}. ${a}`).join("\n") : "없음"}
 
 === 할 일 ===
 핵심 성과를 **정확히 3개** 작성하세요. 2개도 4개도 안 됩니다.
@@ -843,7 +843,7 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
           console.warn("성과 재요청 실패, 1차 결과를 사용합니다:", e);
         }
       }
-      achievements = achievements.filter(a => a.trim()).slice(0, 3);
+      achievements = achievements.filter((a: string) => a.trim()).slice(0, 3);
 
       const result: ReportResult = {
         summary: String(parsed.summary ?? ""),
