@@ -32,6 +32,7 @@ import {
 import { useEditAccess } from "../shareSheet/useEditAccess";
 import { useCollaboration } from "../shareSheet/useCollaboration";
 import { usePresence } from "../shareSheet/usePresence";
+import SelectionBar from "./SelectionBar";
 import ShapePicker from "./ShapePicker";
 import SlideCanvas from "./SlideCanvas";
 import SlideList from "./SlideList";
@@ -43,9 +44,13 @@ import {
   moveSlide,
   objectsOf,
   readSlides,
+  bringToFront,
   groupObjects,
   hasGroupedObject,
+  nudgeObjects,
+  paintObjects,
   removeSlide,
+  sendToBack,
   setSlideLocked,
   ungroupObjects,
   slideOrderOf,
@@ -255,6 +260,22 @@ export default function ShareSlidePage() {
     ungroupObjects(ydoc, selectedIds, origin);
   }, [ydoc, selectedIds, isLocked, origin]);
 
+  const paintSelected = useCallback(
+    (patch: { fill?: string; stroke?: string }) => {
+      if (!ydoc || isLocked) return;
+      paintObjects(ydoc, selectedIds, patch, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      if (!ydoc || isLocked) return;
+      nudgeObjects(ydoc, selectedIds, dx, dy, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
   const selectionHasGroup = ydoc ? hasGroupedObject(ydoc, selectedIds) : false;
 
   useEffect(() => {
@@ -279,6 +300,15 @@ export default function ShareSlidePage() {
         e.preventDefault();
         if (e.shiftKey) ungroupSelected();
         else groupSelected();
+      } else if (e.key.startsWith("Arrow")) {
+        if (selectedIds.length === 0) return;
+        e.preventDefault();
+        // Shift 를 같이 누르면 10칸씩. 자리를 크게 옮길 때 편하다.
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === "ArrowLeft") nudgeSelected(-step, 0);
+        else if (e.key === "ArrowRight") nudgeSelected(step, 0);
+        else if (e.key === "ArrowUp") nudgeSelected(0, -step);
+        else if (e.key === "ArrowDown") nudgeSelected(0, step);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.length === 0) return;
         e.preventDefault();
@@ -290,7 +320,15 @@ export default function ShareSlidePage() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [undoManager, deleteSelected, selectedIds, editingId, groupSelected, ungroupSelected]);
+  }, [
+    undoManager,
+    deleteSelected,
+    selectedIds,
+    editingId,
+    groupSelected,
+    ungroupSelected,
+    nudgeSelected,
+  ]);
 
   // --- 그리기 -------------------------------------------------------------
   if (!ydoc || !activeId) {
@@ -495,8 +533,17 @@ export default function ShareSlidePage() {
 
         <EditAccessBar me={me} access={access} what="슬라이드" />
 
+        <SelectionBar
+          count={isLocked ? 0 : selectedIds.length}
+          onFill={(fill) => paintSelected({ fill })}
+          onStroke={(stroke) => paintSelected({ stroke })}
+          onBringToFront={() => ydoc && bringToFront(ydoc, selectedIds, origin)}
+          onSendToBack={() => ydoc && sendToBack(ydoc, selectedIds, origin)}
+        />
+
         <div className="flex-1 flex min-h-0">
           <SlideList
+            ydoc={ydoc}
             slides={slides}
             currentId={activeId}
             onSelect={(id) => {
