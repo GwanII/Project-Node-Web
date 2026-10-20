@@ -50,6 +50,16 @@ function formatDeadlineLabel(endDate: string | null): string {
 export default function MainPage() {
   const router = useRouter();
 
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("로그아웃 오류:", error);
+      alert("로그아웃 중 오류가 발생했습니다.");
+      return;
+    }
+    router.push("/login");
+  }
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [profileName, setProfileName] = useState("사용자");
 
@@ -343,7 +353,7 @@ export default function MainPage() {
 
                         <button
                           onClick={() => {
-                            alert("로그아웃 되었습니다.");
+                            handleLogout();
                             setIsUserMenuOpen(false);
                           }}
                           className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"
@@ -619,7 +629,7 @@ export default function MainPage() {
 
                 <button
                   onClick={() => {
-                    alert("로그아웃 되었습니다.");
+                    handleLogout();
                     setIsUserMenuOpen(false);
                   }}
                   className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"

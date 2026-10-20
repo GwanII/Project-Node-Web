@@ -125,6 +125,16 @@ function formatVoteDeadline(deadline: string | null): { label: string; isPast: b
 
 export default function ProjectMainPage() {
   const router = useRouter();
+
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("로그아웃 오류:", error);
+      alert("로그아웃 중 오류가 발생했습니다.");
+      return;
+    }
+    router.push("/login");
+  }
   const params = useParams<{ id: string }>();
   const projectId = params.id;
 
@@ -1735,7 +1745,7 @@ export default function ProjectMainPage() {
 
                       <button
                         onClick={() => {
-                          alert("로그아웃 되었습니다.");
+                          handleLogout();
                           setIsUserMenuOpen(false);
                         }}
                         className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"
