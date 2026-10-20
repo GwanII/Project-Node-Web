@@ -1,6 +1,7 @@
 import type * as Y from "yjs";
 
 import { createId } from "../shareSheet/data";
+import { SHAPES, SHAPE_BY_NAME } from "./shapes";
 import { createEmptyVote, type VoteAttrs } from "../shareSheet/VoteBlock";
 import { createEmptyCalendar, type CalendarAttrs } from "../shareSheet/CalendarBlock";
 
@@ -18,42 +19,24 @@ import { createEmptyCalendar, type CalendarAttrs } from "../shareSheet/CalendarB
  * 차례와 내용을 나눈 이유는, 순서를 바꿀 때 슬라이드 내용까지 건드리지 않기 위해서다.
  */
 
-/** 슬라이드 위에 놓을 수 있는 것들. text 는 안에 편집기가 들어있는 상자다. */
-export type ObjectType =
-  | "rect"
-  | "roundRect"
-  | "ellipse"
-  | "triangle"
-  | "diamond"
-  | "pentagon"
-  | "star"
-  | "speech"
-  | "line"
-  | "arrow"
-  | "text"
-  | "table"
-  | "calendar"
-  | "vote";
+/** 안에 내용이 들어있는 물체. text 는 안에 편집기가 들어있는 상자다. */
+export type ContentType = "text" | "table" | "calendar" | "vote";
+
+/**
+ * 슬라이드 위에 놓을 수 있는 것들.
+ *
+ * 도형 이름은 손으로 적지 않고 shapes.ts 의 표에서 끌어온다.
+ * 그래서 표에 한 줄 넣으면 여기까지 저절로 따라온다.
+ */
+export type ObjectType = ContentType | string;
 
 /** 도구 모음에서 고르는 종류 (text 포함) */
 export type ShapeType = ObjectType;
 
 /** 선처럼 다루는 것들. 채우기가 없고 놓을 때 기준점이 다르다. */
-export const LINE_TYPES: ObjectType[] = ["line", "arrow"];
-
-/** 도형 모음 버튼에 넣을 목록 (텍스트·선 제외) */
-export const SHAPE_PALETTE: ObjectType[] = [
-  "rect",
-  "roundRect",
-  "ellipse",
-  "triangle",
-  "diamond",
-  "pentagon",
-  "star",
-  "speech",
-  "line",
-  "arrow",
-];
+export const LINE_TYPES: ObjectType[] = SHAPES.filter(
+  (s) => s.render === "line"
+).map((s) => s.name);
 
 export interface Slide {
   id: string;
@@ -103,22 +86,18 @@ export function createEmptyTable(rows = 3, cols = 3): TableData {
 export const SLIDE_WIDTH = 1280;
 export const SLIDE_HEIGHT = 720;
 
-export const SHAPE_LABELS: Record<ObjectType, string> = {
-  rect: "사각형",
-  roundRect: "둥근 사각형",
-  ellipse: "원",
-  triangle: "삼각형",
-  diamond: "마름모",
-  pentagon: "오각형",
-  star: "별",
-  speech: "말풍선",
-  line: "선",
-  arrow: "화살표",
+/** 화면에 띄울 이름. 도형은 표에서 가져오고, 내용 물체만 따로 적는다. */
+export const SHAPE_LABELS: Record<string, string> = {
+  ...Object.fromEntries(SHAPES.map((s) => [s.name, s.label])),
   text: "텍스트 상자",
   table: "표",
   calendar: "달력",
   vote: "투표",
 };
+
+/** 모르는 이름이 와도 화면이 안 깨지게 한다. */
+export const labelOf = (type: ObjectType): string =>
+  SHAPE_LABELS[type] ?? SHAPE_BY_NAME[type]?.label ?? type;
 
 /** 안에 내용이 들어있는 물체들. 테두리·채우기를 쓰지 않는다. */
 export const CONTENT_TYPES: ObjectType[] = ["text", "table", "calendar", "vote"];
@@ -306,6 +285,93 @@ export function ungroupObjects(doc: Y.Doc, ids: string[], origin: object): void 
         delete next.groupId;
         objects.set(id, next);
       }
+    });
+  }, origin);
+}
+
+// ---------------------------------------------------------------------------
+// 겹침 순서
+// ---------------------------------------------------------------------------
+
+/**
+ * 고른 것을 맨 앞으로 보낸다.
+ *
+ * order 가 큰 쪽이 위에 그려진다. 고른 것들끼리의 차례는 그대로 두고
+ * 나머지보다 뒤 번호를 주면 된다.
+ */
+export function bringToFront(doc: Y.Doc, ids: string[], origin: object): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  const picked = ids
+    .map((id) => objects.get(id))
+    .filter((o): o is SlideObject => !!o)
+    .sort((a, b) => a.order - b.order);
+  if (picked.length === 0) return;
+
+  const slideId = picked[0].slideId;
+  const top = Math.max(
+    ...readObjects(doc, slideId).map((o) => o.order),
+    0
+  );
+  doc.transact(() => {
+    picked.forEach((o, i) => objects.set(o.id, { ...o, order: top + 1 + i }));
+  }, origin);
+}
+
+/** 고른 것을 맨 뒤로 보낸다. */
+export function sendToBack(doc: Y.Doc, ids: string[], origin: object): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  const picked = ids
+    .map((id) => objects.get(id))
+    .filter((o): o is SlideObject => !!o)
+    .sort((a, b) => a.order - b.order);
+  if (picked.length === 0) return;
+
+  const slideId = picked[0].slideId;
+  const bottom = Math.min(
+    ...readObjects(doc, slideId).map((o) => o.order),
+    0
+  );
+  doc.transact(() => {
+    // 뒤에서부터 번호를 매겨야 고른 것들끼리의 차례가 유지된다.
+    picked.forEach((o, i) =>
+      objects.set(o.id, { ...o, order: bottom - picked.length + i })
+    );
+  }, origin);
+}
+
+/** 고른 것들의 색을 한꺼번에 바꾼다. patch 에 넣은 것만 바뀐다. */
+export function paintObjects(
+  doc: Y.Doc,
+  ids: string[],
+  patch: { fill?: string; stroke?: string },
+  origin: object
+): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  doc.transact(() => {
+    ids.forEach((id) => {
+      const o = objects.get(id);
+      if (o) objects.set(id, { ...o, ...patch });
+    });
+  }, origin);
+}
+
+/** 고른 것들을 상대 거리만큼 옮긴다. 방향키로 미세 조정할 때 쓴다. */
+export function nudgeObjects(
+  doc: Y.Doc,
+  ids: string[],
+  dx: number,
+  dy: number,
+  origin: object
+): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  doc.transact(() => {
+    ids.forEach((id) => {
+      const o = objects.get(id);
+      if (o) objects.set(id, { ...o, x: o.x + dx, y: o.y + dy });
     });
   }, origin);
 }

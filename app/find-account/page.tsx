@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Turnstile from "@/src/components/Turnstile";
 
 export default function FindAccountPage() {
   const [phone, setPhone] = useState("");
@@ -26,6 +27,10 @@ export default function FindAccountPage() {
   const [checkingCode, setCheckingCode] = useState(false);
   const [resendingCode, setResendingCode] = useState(false);
 
+  // CAPTCHA 인증 토큰
+  const [turnstileToken, setTurnstileToken] =
+    useState<string | null>(null);
+
   // 인증번호 유효시간
   const [expiresAt, setExpiresAt] = useState<number | null>(
     null
@@ -42,8 +47,28 @@ export default function FindAccountPage() {
   const [resendRemainingSeconds, setResendRemainingSeconds] =
     useState(0);
 
+  // 휴대폰 번호 자동 하이픈
+  const formatPhoneNumber = (value: string) => {
+    const numbers = value.replace(/\D/g, "").slice(0, 11);
+
+    if (numbers.length <= 3) {
+      return numbers;
+    }
+
+    if (numbers.length <= 7) {
+      return `${numbers.slice(0, 3)}-${numbers.slice(3)}`;
+    }
+
+    return `${numbers.slice(0, 3)}-${numbers.slice(
+      3,
+      7
+    )}-${numbers.slice(7)}`;
+  };
+
   const isSendButtonDisabled =
-    sendingCode || phone.trim() === "";
+    sendingCode ||
+    phone.trim() === "" ||
+    !turnstileToken;
 
   const isVerifyButtonDisabled =
     checkingCode ||
@@ -121,6 +146,13 @@ export default function FindAccountPage() {
   const handleSendCode = async () => {
     if (isSendButtonDisabled) return;
 
+    if (!turnstileToken) {
+      setPhoneError(
+        "CAPTCHA 인증을 완료해 주세요."
+      );
+      return;
+    }
+
     setPhoneError("");
     setCodeError("");
     setSendingCode(true);
@@ -136,6 +168,7 @@ export default function FindAccountPage() {
           body: JSON.stringify({
             phone,
             purpose: "account-recovery",
+            turnstileToken,
           }),
         }
       );
@@ -229,10 +262,6 @@ export default function FindAccountPage() {
             "인증번호 재전송 중 오류가 발생했습니다."
         );
 
-        /*
-          서버가 남은 대기시간을 알려준 경우
-          서버 기준으로 다시 타이머를 맞춥니다.
-        */
         if (data.retryAfter) {
           setResendAvailableAt(
             Date.now() +
@@ -245,26 +274,15 @@ export default function FindAccountPage() {
 
       const now = Date.now();
 
-      /*
-        재전송하면 인증번호 유효시간을
-        다시 5분으로 설정합니다.
-      */
       setExpiresAt(
         now + data.expiresIn * 1000
       );
 
-      /*
-        재전송 후 다시 60초 동안 기다립니다.
-      */
       setResendAvailableAt(
         now +
           data.resendAvailableIn * 1000
       );
 
-      /*
-        이전에 입력했던 인증번호는
-        새로운 인증번호와 관련이 없으므로 초기화합니다.
-      */
       setVerificationCode("");
       setCodeError("");
     } catch (error) {
@@ -385,7 +403,6 @@ export default function FindAccountPage() {
             >
               계정 찾기
 
-              {/* 카드와 이어지는 연결부 */}
               <span
                 className="
                   absolute
@@ -430,12 +447,10 @@ export default function FindAccountPage() {
               px-10 py-10
             "
           >
-            {/* 제목 */}
             <h2 className="mb-4 text-center text-3xl font-bold text-gray-800">
               계정 찾기
             </h2>
 
-            {/* 설명 */}
             <p className="mb-10 text-center text-sm leading-6 text-gray-500">
               가입 시 인증한 휴대폰 번호를 입력해 주세요.
               <br />
@@ -452,13 +467,17 @@ export default function FindAccountPage() {
 
                   <input
                     type="tel"
+                    inputMode="numeric"
                     value={phone}
                     onChange={(e) => {
-                      setPhone(e.target.value);
+                      setPhone(
+                        formatPhoneNumber(e.target.value)
+                      );
                       setPhoneError("");
                     }}
                     disabled={codeSent}
                     placeholder="010-1234-5678"
+                    maxLength={13}
                     className="
                       w-full rounded
                       border border-gray-300
@@ -476,6 +495,18 @@ export default function FindAccountPage() {
                       {phoneError}
                     </p>
                   )}
+                </div>
+
+                {/* CAPTCHA */}
+                <div className="mt-4 flex justify-center">
+                  <Turnstile
+                    onSuccess={(token) =>
+                      setTurnstileToken(token)
+                    }
+                    onExpire={() =>
+                      setTurnstileToken(null)
+                    }
+                  />
                 </div>
 
                 {/* 인증번호 받기 */}

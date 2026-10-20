@@ -3,16 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 import {
-  Square,
-  SquareRoundCorner,
-  Circle,
-  Triangle,
-  Diamond,
-  Pentagon,
-  Star,
-  MessageSquare,
-  Minus,
-  MoveUpRight,
   MousePointer2,
   Type,
   Table,
@@ -32,7 +22,9 @@ import {
 
 import Sidebar from "../shareSheet/Sidebar";
 import EditAccessBar from "../shareSheet/EditAccessBar";
+import MemberStrip from "../shareSheet/MemberStrip";
 import {
+  buildMembers,
   getMyIdentity,
   loadDocument,
   type MyIdentity,
@@ -40,6 +32,8 @@ import {
 import { useEditAccess } from "../shareSheet/useEditAccess";
 import { useCollaboration } from "../shareSheet/useCollaboration";
 import { usePresence } from "../shareSheet/usePresence";
+import SelectionBar from "./SelectionBar";
+import ShapePicker from "./ShapePicker";
 import SlideCanvas from "./SlideCanvas";
 import SlideList from "./SlideList";
 import SlidePresentation from "./SlidePresentation";
@@ -50,9 +44,13 @@ import {
   moveSlide,
   objectsOf,
   readSlides,
+  bringToFront,
   groupObjects,
   hasGroupedObject,
+  nudgeObjects,
+  paintObjects,
   removeSlide,
+  sendToBack,
   setSlideLocked,
   ungroupObjects,
   slideOrderOf,
@@ -69,20 +67,6 @@ import {
  */
 
 const DECK_ID = "default-deck";
-
-/** 도형 모음에 넣을 것들. 텍스트 상자는 따로 버튼을 둔다. */
-const SHAPE_TOOLS: Array<{ type: ShapeType; icon: typeof Square }> = [
-  { type: "rect", icon: Square },
-  { type: "roundRect", icon: SquareRoundCorner },
-  { type: "ellipse", icon: Circle },
-  { type: "triangle", icon: Triangle },
-  { type: "diamond", icon: Diamond },
-  { type: "pentagon", icon: Pentagon },
-  { type: "star", icon: Star },
-  { type: "speech", icon: MessageSquare },
-  { type: "line", icon: Minus },
-  { type: "arrow", icon: MoveUpRight },
-];
 
 export default function ShareSlidePage() {
   // 아직 확인 중이면 null 이다. 그래서 버튼이 깜빡이지 않는다.
@@ -106,6 +90,9 @@ export default function ShareSlidePage() {
 
   const collab = useCollaboration(DECK_ID, isReady);
   const presence = usePresence(DECK_ID, myName);
+
+  // 명단에 없는 사람(손님 등)도 접속하면 뒤에 붙여서 보여준다.
+  const members = useMemo(() => buildMembers(presence.names), [presence.names]);
   const ydoc = collab.ydoc;
 
   /** 내가 낸 변경임을 표시하는 딱지. 되돌리기가 내 것만 되돌리게 한다. */
@@ -273,6 +260,22 @@ export default function ShareSlidePage() {
     ungroupObjects(ydoc, selectedIds, origin);
   }, [ydoc, selectedIds, isLocked, origin]);
 
+  const paintSelected = useCallback(
+    (patch: { fill?: string; stroke?: string }) => {
+      if (!ydoc || isLocked) return;
+      paintObjects(ydoc, selectedIds, patch, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      if (!ydoc || isLocked) return;
+      nudgeObjects(ydoc, selectedIds, dx, dy, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
   const selectionHasGroup = ydoc ? hasGroupedObject(ydoc, selectedIds) : false;
 
   useEffect(() => {
@@ -297,6 +300,15 @@ export default function ShareSlidePage() {
         e.preventDefault();
         if (e.shiftKey) ungroupSelected();
         else groupSelected();
+      } else if (e.key.startsWith("Arrow")) {
+        if (selectedIds.length === 0) return;
+        e.preventDefault();
+        // Shift 를 같이 누르면 10칸씩. 자리를 크게 옮길 때 편하다.
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === "ArrowLeft") nudgeSelected(-step, 0);
+        else if (e.key === "ArrowRight") nudgeSelected(step, 0);
+        else if (e.key === "ArrowUp") nudgeSelected(0, -step);
+        else if (e.key === "ArrowDown") nudgeSelected(0, step);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.length === 0) return;
         e.preventDefault();
@@ -308,7 +320,15 @@ export default function ShareSlidePage() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [undoManager, deleteSelected, selectedIds, editingId, groupSelected, ungroupSelected]);
+  }, [
+    undoManager,
+    deleteSelected,
+    selectedIds,
+    editingId,
+    groupSelected,
+    ungroupSelected,
+    nudgeSelected,
+  ]);
 
   // --- 그리기 -------------------------------------------------------------
   if (!ydoc || !activeId) {
@@ -392,31 +412,13 @@ export default function ShareSlidePage() {
               </button>
 
               {isShapeMenuOpen && (
-                <div className="absolute left-1/2 -translate-x-1/2 top-full mt-2 bg-white border border-gray-200 rounded-xl shadow-lg p-2 z-30 w-56">
-                  <div className="grid grid-cols-5 gap-1">
-                    {SHAPE_TOOLS.map(({ type, icon: Icon }) => (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => {
-                          setPendingShape(pendingShape === type ? null : type);
-                          setIsShapeMenuOpen(false);
-                        }}
-                        className={`flex items-center justify-center px-1 py-2 rounded-lg transition-colors ${
-                          pendingShape === type
-                            ? "bg-[#8CA5FF] text-white"
-                            : "text-gray-700 hover:bg-blue-50"
-                        }`}
-                        title={`${SHAPE_LABELS[type]} — 누른 뒤 슬라이드를 클릭하세요`}
-                      >
-                        <Icon className="w-5 h-5" />
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-gray-400 px-1 pt-2">
-                    고른 뒤 슬라이드를 클릭하면 놓입니다
-                  </p>
-                </div>
+                <ShapePicker
+                  selected={pendingShape}
+                  onPick={(name) => {
+                    setPendingShape(pendingShape === name ? null : name);
+                    setIsShapeMenuOpen(false);
+                  }}
+                />
               )}
             </div>
 
@@ -489,25 +491,21 @@ export default function ShareSlidePage() {
 
           {/* 접속자 */}
           <div className="flex items-center gap-2 shrink-0">
-            <div
-              className={`flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full ${
-                presence.isConnected
-                  ? "bg-green-50 text-green-700"
-                  : "bg-gray-100 text-gray-400"
-              }`}
-              title={
-                presence.isConnected
-                  ? `지금 ${presence.connections}개의 창이 이 슬라이드를 열고 있습니다`
-                  : "실시간 연결을 기다리는 중"
-              }
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  presence.isConnected ? "bg-green-500 animate-pulse" : "bg-gray-300"
-                }`}
-              />
-              {presence.isConnected ? `${presence.connections}명 접속 중` : "연결 중…"}
-            </div>
+            <MemberStrip
+              members={members}
+              connections={presence.connections}
+              isConnected={presence.isConnected}
+              what="이 슬라이드"
+              /*
+                슬라이드 머리띠는 도구가 많아 자리가 빠듯하다.
+                1280 짜리 노트북에서도 넘치지 않도록 이름과 접속자 수 글자를 빼고
+                동그라미 3개까지만 둔다. 나머지는 +N 에 모이고 올려놓으면 이름이 뜬다.
+              */
+              showNames={false}
+              showCount={false}
+              max={3}
+            />
+
             {/*
               로그인을 안 했으면 여기가 "로그인" 버튼이 된다.
               로그인을 안 해도 편집은 되지만, 접속자 목록에 실명 대신 손님으로 뜬다.
@@ -535,8 +533,17 @@ export default function ShareSlidePage() {
 
         <EditAccessBar me={me} access={access} what="슬라이드" />
 
+        <SelectionBar
+          count={isLocked ? 0 : selectedIds.length}
+          onFill={(fill) => paintSelected({ fill })}
+          onStroke={(stroke) => paintSelected({ stroke })}
+          onBringToFront={() => ydoc && bringToFront(ydoc, selectedIds, origin)}
+          onSendToBack={() => ydoc && sendToBack(ydoc, selectedIds, origin)}
+        />
+
         <div className="flex-1 flex min-h-0">
           <SlideList
+            ydoc={ydoc}
             slides={slides}
             currentId={activeId}
             onSelect={(id) => {

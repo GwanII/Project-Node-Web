@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+
+import MemberStrip, { type Member } from "./MemberStrip";
 import {
   Pencil,
   Keyboard,
@@ -21,12 +23,7 @@ export type EditorMode = "typing" | "drawing";
 
 export type SaveState = "saving" | "saved";
 
-export interface Member {
-  id: number;
-  name: string;
-  /** 지금 이 문서를 보고 있는 사람이면 초록 테두리가 들어온다. */
-  isActive: boolean;
-}
+export type { Member };
 
 interface ToolbarProps {
   title: string;
@@ -239,46 +236,12 @@ export default function Toolbar({
 
       {/* 접속자 목록 */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* 실시간 접속 상태 */}
-        <div
-          className={`flex items-center gap-1.5 text-[11px] font-bold px-2 py-1 rounded-full ${
-            isPresenceConnected
-              ? "bg-green-50 text-green-700"
-              : "bg-gray-100 text-gray-400"
-          }`}
-          title={
-            isPresenceConnected
-              ? `지금 ${connections}개의 창이 이 문서를 열고 있습니다`
-              : "실시간 연결을 기다리는 중"
-          }
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full ${
-              isPresenceConnected ? "bg-green-500 animate-pulse" : "bg-gray-300"
-            }`}
-          />
-          {isPresenceConnected ? `${connections}명 접속 중` : "연결 중…"}
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {members.map((member) => (
-            <div key={member.id} className="flex flex-col items-center gap-0.5">
-              <div
-                className={`w-8 h-8 rounded-full bg-gray-50 flex items-center justify-center text-gray-500 transition-colors ${
-                  member.isActive
-                    ? "border-2 border-green-500 text-gray-700"
-                    : "border border-gray-300"
-                }`}
-                title={member.isActive ? `${member.name} — 작업 중` : member.name}
-              >
-                <User className="w-4 h-4" />
-              </div>
-              <span className="text-[10px] font-semibold text-gray-600 leading-none">
-                {member.name}
-              </span>
-            </div>
-          ))}
-        </div>
+        <MemberStrip
+          members={members}
+          connections={connections}
+          isConnected={isPresenceConnected}
+          what="이 문서"
+        />
 
         <div className="w-px h-8 bg-gray-200 mx-1" />
 

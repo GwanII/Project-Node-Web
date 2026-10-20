@@ -9,6 +9,7 @@ import Editor, { type EditorHandle } from "./Editor";
 import DrawingLayer from "./DrawingLayer";
 import EditAccessBar from "./EditAccessBar";
 import {
+  buildMembers,
   getMyIdentity,
   loadDocument,
   saveDocument,
@@ -18,10 +19,6 @@ import {
 import { usePresence } from "./usePresence";
 import { useCollaboration } from "./useCollaboration";
 import { useEditAccess } from "./useEditAccess";
-
-// 팀원 명단. 아직 팀원 테이블이 없어서 고정 목록을 쓴다.
-// 누가 "지금 접속 중"인지는 아래 usePresence 가 실시간으로 알려준다.
-const TEAM_MEMBERS = ["박성빈", "박기완", "한주현", "권소희", "박서연"];
 
 // 지금은 문서가 하나뿐이다. 나중에 여러 문서를 다루게 되면 주소에서 받아온다.
 const DOCUMENT_ID = "default-sheet";
@@ -67,14 +64,10 @@ export default function ShareSheetPage() {
   const canEdit = access.canEdit && !(doc?.isLocked ?? true);
 
   // 명단에 없는 사람(로그인 계정 등)도 접속하면 뒤에 붙여서 보여준다.
-  const members: Member[] = useMemo(() => {
-    const extras = presence.names.filter((n) => !TEAM_MEMBERS.includes(n));
-    return [...TEAM_MEMBERS, ...extras].map((name, index) => ({
-      id: index + 1,
-      name,
-      isActive: presence.names.includes(name),
-    }));
-  }, [presence.names]);
+  const members: Member[] = useMemo(
+    () => buildMembers(presence.names),
+    [presence.names]
+  );
 
   // 최신 문서를 항상 들고 있어야 여러 곳에서 들어오는 수정을 안 놓친다.
   const docRef = useRef<SheetDocument | null>(null);

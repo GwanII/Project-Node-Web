@@ -120,6 +120,32 @@ export const CURRENT_USER = "박성빈";
  */
 export const TEAM_LEADER = "박기완";
 
+/**
+ * 팀원 명단.
+ *
+ * 아직 팀원 테이블이 없어서 고정 목록을 쓴다. 누가 "지금 접속 중"인지는
+ * usePresence 가 실시간으로 알려주고, 이 명단은 "누가 팀원인지"만 담는다.
+ * 시트지와 슬라이드가 같은 명단을 봐야 해서 여기에 뒀다.
+ */
+export const TEAM_MEMBERS = ["박성빈", "박기완", "한주현", "권소희", "박서연"];
+
+/**
+ * 화면에 뿌릴 접속자 목록을 만든다.
+ *
+ * 명단에 있는 사람은 안 들어와 있어도 항상 보여 주고(회색),
+ * 명단에 없는 사람이 들어오면 뒤에 붙인다(손님 등).
+ */
+export function buildMembers(
+  presentNames: string[]
+): Array<{ id: number; name: string; isActive: boolean }> {
+  const extras = presentNames.filter((n) => !TEAM_MEMBERS.includes(n));
+  return [...TEAM_MEMBERS, ...extras].map((name, index) => ({
+    id: index + 1,
+    name,
+    isActive: presentNames.includes(name),
+  }));
+}
+
 /** 지금 화면을 보고 있는 사람. */
 export interface MyIdentity {
   /** 화면과 실시간 접속자 목록에 보여줄 이름 */

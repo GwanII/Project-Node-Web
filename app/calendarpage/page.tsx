@@ -45,8 +45,9 @@ export default function CustomNotionCalendar() {
 
   const [currentUser, setCurrentUser] = useState<{ id: string; name: string; email: string } | null>(null);
 
-  // ============= 참여 가능일 목록. 이후 수정 필요 ===============
-  const [myAvailableDates, setMyAvailableDates] = useState<string[]>([]);
+  // ============= 참여 가능일 및 팀원 데이터 ===============
+  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string }>>([]);
+  const [allAvailabilities, setAllAvailabilities] = useState<Array<{ id: string; user_id: string; date_str: string }>>([]);
 
   const [newTitle, setNewTitle] = useState<string>('');
   const getTodayString = () => {
@@ -69,6 +70,8 @@ export default function CustomNotionCalendar() {
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
 
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
   // 메모
   const [memos, setMemos] = useState<MemoItem[]>([]);
   const [memoMode, setMemoMode] = useState<'list' | 'write' | 'detail' | 'edit'>('list');
@@ -76,21 +79,94 @@ export default function CustomNotionCalendar() {
   const [memoTitle, setMemoTitle] = useState<string>('');
   const [memoContent, setMemoContent] = useState<string>('');
 
-  // =========== 이메일만 임의로 가져옴. 이후 수정 필요 =============
+  const [isLocked, setIsLocked] = useState(false);
+  // 현재 보고 있는 달에서 오늘이 속한 달로 이동
+  const goToToday = () => {
+    const today = new Date();
+    setCurrentDate(new Date());
+  };
+  
   useEffect(() => {
-    const fetchUserData = async () => {
+    const fetchUserDataAndAvailabilities = async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        setCurrentUser({
-          id: user.id,
-          name: user.user_metadata?.full_name || user.email?.split('@')[0] || '사용자',
-          email: user.email || ''
+      
+      // 잠금 기능 추가 시 shareSheet처럼 손님 기능으로 수정
+      if (!user) {
+        alert('로그인이 필요한 서비스입니다.');
+        router.push('/login');
+        return;
+      }
+
+      const currentMemberName = user.user_metadata?.full_name || user.email?.split('@')[0] || '사용자';
+      setCurrentUser({
+        id: user.id,
+        name: currentMemberName,
+        email: user.email || ''
+      });
+
+      // RLS 정책 추가 시 로그인된 사람 목록만
+      const { data: availData, error: availError } = await supabase
+        .from('cal_availabilities')
+        .select(`
+          id,
+          user_id,
+          date_str,
+          profiles (
+            nickname
+          )
+        `);
+
+      if (availError) {
+        console.error('참여 가능일 불러오기 실패:', availError);
+        return;
+      }
+
+      if (availData) {
+        // 참여 가능일 목록
+        const mappedAvailabilities = availData.map((item: any) => {
+          const profileInfo = Array.isArray(item.profiles) ? item.profiles[0] : item.profiles;
+          return {
+            id: item.id,
+            user_id: item.user_id,
+            date_str: item.date_str,
+            nickname: profileInfo?.nickname || '닉네임 없음'
+          };
         });
+
+        setAllAvailabilities(mappedAvailabilities);
+
+        // 팀원 목록 유니크 추출
+        const uniqueMembersMap = new Map();
+        availData.forEach((item: any) => {
+          const profileInfo = Array.isArray(item.profiles) ? item.profiles[0] : item.profiles;
+          if (item.user_id) {
+            uniqueMembersMap.set(item.user_id, {
+              id: item.user_id,
+              name: profileInfo?.nickname || '사용자'
+            });
+          }
+        });
+
+        // 내가 참여 가능일을 아직 안 눌러서 availData에 없다면 팀원 목록에 추가
+        if (!uniqueMembersMap.has(user.id)) {
+          const { data: myProfile } = await supabase
+            .from('profiles')
+            .select('nickname')
+            .eq('id', user.id)
+            .single();
+
+          uniqueMembersMap.set(user.id, {
+            id: user.id,
+            name: myProfile?.nickname || currentMemberName
+          });
+        }
+
+        setTeamMembers(Array.from(uniqueMembersMap.values()));
       }
     };
 
-    fetchUserData();
-  }, []);
+    fetchUserDataAndAvailabilities();
+  }, [router]);
 
   // 날짜 선택 시 해당 날짜의 메모 불러오기
   useEffect(() => {
@@ -128,6 +204,7 @@ export default function CustomNotionCalendar() {
       const { data, error } = await supabase
         .from('cal_events')
         .select('*')
+        .order('sort_order', { ascending: true }) // sort_order 기준 정렬로 변경
         .order('created_at', { ascending: true });
 
       if (error) {
@@ -141,7 +218,8 @@ export default function CustomNotionCalendar() {
           title: evt.title,
           startDate: evt.start_date,
           endDate: evt.end_date,
-          color: evt.color
+          color: evt.color,
+          sortOrder: evt.sort_order // 인터페이스에 맞게 매핑
         }));
         setEvents(mappedEvents);
       }
@@ -150,13 +228,61 @@ export default function CustomNotionCalendar() {
     fetchEvents();
   }, []);
 
-  // ========== 참여 가능일. 이후 수정 필요 ===========
-  const toggleAvailableDate = (dateStr: string) => {
-    setMyAvailableDates((prev) =>
-      prev.includes(dateStr)
-        ? prev.filter((d) => d !== dateStr)
-        : [...prev, dateStr]
+  // ========== 참여 가능일 ===========
+  const toggleAvailableDate = async (dateStr: string) => {
+
+    const existingItem = allAvailabilities.find(
+      (item) => item.user_id === currentUser?.id && item.date_str === dateStr
     );
+
+    if (existingItem) {
+      // 이미 체크된 경우 -> DB에서 삭제
+      const { error } = await supabase
+        .from('cal_availabilities')
+        .delete()
+        .eq('id', existingItem.id);
+
+      if (error) {
+        alert('참여 가능일 취소에 실패했습니다.');
+        console.error(error);
+        return;
+      }
+
+      setAllAvailabilities((prev) => prev.filter((item) => item.id !== existingItem.id));
+    } else {
+      // 체크되지 않은 경우 -> DB에 추가
+      const { data, error } = await supabase
+        .from('cal_availabilities')
+        .insert([
+          {
+            user_id: currentUser?.id,
+            date_str: dateStr,
+          },
+        ])
+        .select()
+        .single();
+
+      if (error) {
+        alert('참여 가능일 등록에 실패했습니다.');
+        console.error(error);
+        return;
+      }
+
+      if (data) {
+        setAllAvailabilities((prev) => [...prev, data]);
+      }
+    }
+  };
+
+  // 팀원 전원이 해당 날짜에 참여 가능한지 판별
+  const isAllTeamAvailable = (dateStr: string) => {
+    if (teamMembers.length === 0) return false;
+
+    const usersWhoCanAttend = allAvailabilities
+      .filter((item) => item.date_str === dateStr)
+      .map((item) => item.user_id);
+
+    return teamMembers.every((member) => usersWhoCanAttend.includes(member.id));
   };
 
   const [draggedItemId, setDraggedItemId] = useState<string | null>(null);
@@ -187,9 +313,24 @@ export default function CustomNotionCalendar() {
     if (dragOverId !== id) setDragOverId(id);
   };
 
-  const handleDrop = (targetId: string) => {
+  const handleDrop = async (targetId: string) => {
     if (draggedItemId !== null) {
-      setEvents((prev) => reorderById(prev, draggedItemId, targetId));
+      const updatedEvents = reorderById(events, draggedItemId, targetId);
+      setEvents(updatedEvents);
+
+      try {
+        const updatePromises = updatedEvents.map((evt, index) => 
+          supabase
+            .from('cal_events')
+            .update({ sort_order: index })
+            .eq('id', evt.id)
+        );
+
+        await Promise.all(updatePromises);
+      } catch (error) {
+        console.error('일정 순서 저장 실패:', error);
+        alert('순서 변경을 저장하는 중 오류가 발생했습니다.');
+      }
     }
     setDraggedItemId(null);
     setDragOverId(null);
@@ -204,6 +345,7 @@ export default function CustomNotionCalendar() {
     router.push('/Projectmainpage');
   };
   
+  // 일정 추가
   const handleAddEvent = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -217,6 +359,9 @@ export default function CustomNotionCalendar() {
       return;
     }
 
+    if (isLoading) return;
+
+    setIsLoading(true);
     const { data, error } = await supabase
       .from('cal_events')
       .insert([
@@ -230,6 +375,8 @@ export default function CustomNotionCalendar() {
       ])
       .select()
       .single();
+
+    setIsLoading(false);
 
     if (error) {
       alert('일정 추가에 실패했습니다.');
@@ -253,14 +400,7 @@ export default function CustomNotionCalendar() {
     }
   };
 
-  const handleOpenEditModal = (evt: CalendarEvent) => {
-    setSelectedEventToEdit(evt);
-    setEditTitle(evt.title);
-    setEditStartDate(evt.startDate);
-    setEditEndDate(evt.endDate);
-    setEditColor(evt.color || COLOR_OPTIONS[0]);
-  };
-
+  // 일정 수정
   const handleUpdateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -276,6 +416,9 @@ export default function CustomNotionCalendar() {
       return;
     }
 
+    if (isLoading) return;
+
+    setIsLoading(true);
     const { error } = await supabase
       .from('cal_events')
       .update({
@@ -285,6 +428,8 @@ export default function CustomNotionCalendar() {
         color: editColor
       })
       .eq('id', selectedEventToEdit.id);
+
+    setIsLoading(false);
 
     if (error) {
       alert('일정 수정에 실패했습니다.');
@@ -302,14 +447,18 @@ export default function CustomNotionCalendar() {
     setSelectedEventToEdit(null);
   };
 
+  // 일정 삭제
   const handleDeleteEvent = async () => {
-    if (!selectedEventToEdit) return;
+    if (!selectedEventToEdit || isLoading) return;
 
     if (window.confirm('일정을 삭제하시겠습니까?')) {
+      setIsLoading(true);
       const { error } = await supabase
         .from('cal_events')
         .delete()
         .eq('id', selectedEventToEdit.id);
+
+      setIsLoading(false);
 
       if (error) {
         alert('일정 삭제에 실패했습니다.');
@@ -322,33 +471,31 @@ export default function CustomNotionCalendar() {
     }
   };
 
-  // 메모 저장
+  // 메모 저장 (제목이나 내용 중 하나만 있어도 허용)
   const handleSaveMemo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!memoTitle.trim()) {
-      alert('메모 제목을 입력해주세요.');
+    if (!memoTitle.trim() && !memoContent.trim()) {
+      alert('제목 또는 내용을 입력해주세요.');
       return;
     }
 
-    if (!memoContent.trim()) {
-      alert('메모 내용을 입력해주세요.');
-      return;
-    }
+    if (!selectedDate || isLoading) return;
 
-    if (!selectedDate) return;
-
+    setIsLoading(true);
     const { data, error } = await supabase
       .from('cal_memos')
       .insert([
         {
           date_str: selectedDate,
-          title: memoTitle,
+          title: memoTitle.trim() ? memoTitle : '제목 없음', // 제목이 비어있으면 기본값 처리
           content: memoContent,
           user_id: currentUser?.id || null,
         },
       ])
       .select()
       .single();
+
+    setIsLoading(false);
 
     if (error) {
       alert('메모 저장에 실패했습니다.');
@@ -372,7 +519,7 @@ export default function CustomNotionCalendar() {
     }
   };
 
-  // 메모 수정
+  // 메모 수정 화면 열기
   const handleOpenEditMemo = () => {
     if (!selectedMemo) return;
     setMemoTitle(selectedMemo.title);
@@ -380,38 +527,36 @@ export default function CustomNotionCalendar() {
     setMemoMode('edit');
   };
 
-  // 메모 수정 -> 저장
+  // 메모 수정
   const handleUpdateMemo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!memoTitle.trim()) {
-      alert('메모 제목을 입력해주세요.');
+    if (!memoTitle.trim() && !memoContent.trim()) {
+      alert('제목 또는 내용을 입력해주세요.');
       return;
     }
 
-    if (!memoContent.trim()) {
-      alert('메모 내용을 입력해주세요.');
-      return;
-    }
+    if (!selectedMemo || isLoading) return;
 
-    if (!selectedMemo) return;
-
+    setIsLoading(true);
     const { error } = await supabase
       .from('cal_memos')
       .update({
-        title: memoTitle,
+        title: memoTitle.trim() ? memoTitle : '제목 없음',
         content: memoContent,
       })
       .eq('id', selectedMemo.id);
 
+    setIsLoading(false);
+
     if (error) {
-      alert('메모 수전에 실패했습니다.');
+      alert('메모 수정에 실패했습니다.');
       console.error(error);
       return;
     }
 
     const updatedMemo = {
       ...selectedMemo,
-      title: memoTitle,
+      title: memoTitle.trim() ? memoTitle : '제목 없음',
       content: memoContent,
     };
 
@@ -424,15 +569,18 @@ export default function CustomNotionCalendar() {
     setMemoMode('detail');
   };
 
-  // 메모 삭제 (수정 화면에서)
+  // 메모 삭제
   const handleDeleteMemo = async () => {
-    if (!selectedMemo) return;
+    if (!selectedMemo || isLoading) return;
 
     if (window.confirm('메모를 삭제하시겠습니까?')) {
+      setIsLoading(true);
       const { error } = await supabase
         .from('cal_memos')
         .delete()
         .eq('id', selectedMemo.id);
+
+      setIsLoading(false);
 
       if (error) {
         alert('메모 삭제에 실패했습니다.');
@@ -446,6 +594,14 @@ export default function CustomNotionCalendar() {
       setMemoContent('');
       setMemoMode('list');
     }
+  };
+
+  const handleOpenEditModal = (evt: CalendarEvent) => {
+    setSelectedEventToEdit(evt);
+    setEditTitle(evt.title);
+    setEditStartDate(evt.startDate);
+    setEditEndDate(evt.endDate);
+    setEditColor(evt.color || COLOR_OPTIONS[0]);
   };
 
   const prevMonth = () => {
@@ -517,9 +673,17 @@ export default function CustomNotionCalendar() {
     const weekStartStr = weekDays[0].dateStr;
     const weekEndStr = weekDays[6].dateStr;
 
+    // 해당 주간에 걸치는 이벤트 필터링
     const weekEvents = events.filter(
       (evt) => evt.startDate <= weekEndStr && evt.endDate >= weekStartStr
     );
+
+    // ★ 핵심 수정: 사용자가 드래그 앤 드롭으로 바꾼 전체 events 배열의 순서(인덱스)를 기준으로 정렬
+    weekEvents.sort((a, b) => {
+      const indexA = events.findIndex((e) => e.id === a.id);
+      const indexB = events.findIndex((e) => e.id === b.id);
+      return indexA - indexB;
+    });
 
     const slots: Array<Array<CalendarEvent | null>> = [];
 
@@ -621,6 +785,14 @@ export default function CustomNotionCalendar() {
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={goToToday}
+              className="text-xs font-bold text-sky-200 hover:text-blue-500 transition-colors"
+              style={{ textDecoration: 'none' }}
+            >
+              오늘
+            </button>
             <button className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-black">
               <Lock className="w-5 h-5" />
             </button>
@@ -660,7 +832,7 @@ export default function CustomNotionCalendar() {
                     
                     {/* 레이어 1: 날짜 카드 */}
                     {weekDays.map((item, dIdx) => {
-                      const isAvailable = myAvailableDates.includes(item.dateStr);
+                      const isAllAvailable = isAllTeamAvailable(item.dateStr);
 
                       // 해당 날짜에 걸친 이벤트 중 level >= 3으로 밀려난 개수
                       const hiddenCount = renderedEvents.filter(({ level, startCol, span }) => {
@@ -679,7 +851,7 @@ export default function CustomNotionCalendar() {
                             }
                           }}
                           style={{
-                            backgroundColor: isAvailable ? '#8CA5FF' : '#D9D9D9',
+                            backgroundColor: isAllAvailable ? '#8CA5FF' : '#D9D9D9',
                           }}
                           className={`rounded-xl p-2 flex flex-col justify-between relative cursor-pointer transition-all hover:brightness-95 h-full overflow-hidden ${
                             !item.isCurrentMonth ? 'opacity-40' : ''
@@ -756,13 +928,14 @@ export default function CustomNotionCalendar() {
 
       {/* 우측 드로어 */}
       <div
-        className={`transition-all duration-300 bg-[#EFEFEF] border-l border-gray-300 flex flex-col z-30 shadow-xl shrink-0 ${
-          selectedDate ? "w-96" : "w-0 overflow-hidden border-none"
+        className={`transition-all duration-300 bg-[#EFEFEF] border-l border-gray-300 flex flex-col z-30 shadow-xl shrink-0 h-full overflow-hidden ${
+          selectedDate ? "w-96" : "w-0 border-none"
         }`}
       >
         {selectedDate && (
-          <div className="p-5 flex flex-col h-full space-y-4 overflow-y-auto w-96 relative">
-            <div className="flex justify-between items-center border-b border-gray-300 pb-3">
+          <div className="p-5 flex flex-col h-full w-96 relative overflow-hidden box-border gap-3">
+            {/* 상단 날짜 및 닫기 버튼 */}
+            <div className="flex justify-between items-center border-b border-gray-300 pb-3 shrink-0">
               <span className="font-extrabold text-lg text-black">{selectedDate}</span>
               <button 
                 onClick={() => {
@@ -776,17 +949,17 @@ export default function CustomNotionCalendar() {
               </button>
             </div>
 
-            {/* Drag & Drop 일정 목록 노출 영역 */}
-            <div className="bg-white p-3 rounded-lg shadow-xs space-y-2">
-              <div className="flex justify-between items-center border-b pb-1.5">
+            {/* 일정 순서 목록 (최대 높이 제한 및 내부 스크롤 부여) */}
+            <div className="bg-white p-3 rounded-lg shadow-xs shrink-0 max-h-44 flex flex-col">
+              <div className="flex justify-between items-center border-b pb-1.5 shrink-0">
                 <h3 className="font-bold text-sm text-gray-800">일정 순서</h3>
               </div>
 
-              {getEventsForDate(selectedDate).length === 0 ? (
-                <p className="text-xs text-gray-400">등록된 일정이 없습니다.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {getEventsForDate(selectedDate).map((evt, idx) => (
+              <div className="flex-1 overflow-y-auto mt-2 space-y-1.5 pr-1">
+                {getEventsForDate(selectedDate).length === 0 ? (
+                  <p className="text-xs text-gray-400 py-1">등록된 일정이 없습니다.</p>
+                ) : (
+                  getEventsForDate(selectedDate).map((evt, idx) => (
                     <div
                       key={evt.id}
                       draggable
@@ -810,24 +983,32 @@ export default function CustomNotionCalendar() {
                         </span>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  ))
+                )}
+              </div>
             </div>
 
             {/* 참여 가능 / 참여 불가능 섹션 */}
             {(() => {
-              const isAvailable = myAvailableDates.includes(selectedDate);
-              const userName = currentUser?.name || '사용자';
+              // 선택한 날짜에 체크한 유저 id 목록 뽑기
+              const attendeesUserIds = allAvailabilities
+                .filter((item) => item.date_str === selectedDate)
+                .map((item) => item.user_id);
+
+              // 팀원 중 참여 가능한 사람과 불가능한 사람 분류
+              const availableMembers = teamMembers.filter((m) => attendeesUserIds.includes(m.id));
+              const unavailableMembers = teamMembers.filter((m) => !attendeesUserIds.includes(m.id));
 
               return (
                 <div className="grid grid-cols-2 gap-3">
                   {/* 참여 가능 */}
-                  <div className="bg-[#FFFFFF] p-3 rounded-lg flex flex-col min-h-[140px]">
-                    <h3 className="font-black text-lg text-black mb-1">참여 가능</h3>
-                    <div className="space-y-1">
-                      {isAvailable ? (
-                        <p className="text-xs font-bold text-black">{userName}</p>
+                  <div className="bg-[#FFFFFF] p-3 rounded-lg flex flex-col h-24 overflow-hidden">
+                    <h3 className="font-black text-sm text-black mb-1 shrink-0">참여 가능</h3>
+                    <div className="flex-1 overflow-y-auto space-y-1">
+                      {availableMembers.length > 0 ? (
+                        availableMembers.map((m) => (
+                          <p key={m.id} className="text-xs font-bold text-black">{m.name}</p>
+                        ))
                       ) : (
                         <p className="text-xs font-bold text-black/40">등록된 가능 인원이 없습니다.</p>
                       )}
@@ -835,11 +1016,13 @@ export default function CustomNotionCalendar() {
                   </div>
 
                   {/* 참여 불가능 */}
-                  <div className="bg-[#FFFFFF] p-3 rounded-lg flex flex-col min-h-[140px]">
-                    <h3 className="font-black text-lg text-black mb-1">참여 불가능</h3>
-                    <div className="space-y-1">
-                      {!isAvailable ? (
-                        <p className="text-xs font-bold text-black">{userName}</p>
+                  <div className="bg-[#FFFFFF] p-3 rounded-lg flex flex-col h-24 overflow-hidden">
+                    <h3 className="font-black text-sm text-black mb-1 shrink-0">참여 불가능</h3>
+                    <div className="flex-1 overflow-y-auto space-y-1">
+                      {unavailableMembers.length > 0 ? (
+                        unavailableMembers.map((m) => (
+                          <p key={m.id} className="text-xs font-bold text-black">{m.name}</p>
+                        ))
                       ) : (
                         <p className="text-xs font-bold text-black/40">등록된 불가능 인원이 없습니다.</p>
                       )}
@@ -849,12 +1032,12 @@ export default function CustomNotionCalendar() {
               );
             })()}
 
-            {/* 메모 (목록, 작성, 상세, 수정) */}
-            <div className="flex-1 bg-[#FFFFFF] p-4 rounded-lg flex flex-col relative min-h-[220px]">
+            {/* 메모 */}
+            <div className="flex-1 bg-[#FFFFFF] p-4 rounded-lg flex flex-col relative min-h-0 overflow-hidden shadow-xs">
               {memoMode === 'write' ? (
                 /* 메모 작성 화면 */
                 <form onSubmit={handleSaveMemo} className="flex flex-col h-full space-y-2">
-                  <div className="flex justify-between items-center border-b border-gray-200 pb-1">
+                  <div className="flex justify-between items-center border-b border-gray-200 pb-1 shrink-0">
                     <span className="font-black text-sm text-black">새 메모 작성</span>
                     <button
                       type="button"
@@ -870,40 +1053,42 @@ export default function CustomNotionCalendar() {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <label className="text-xs font-bold text-black shrink-0">제목:</label>
                     <input
                       type="text"
                       value={memoTitle}
-                      onChange={(e) => setMemoTitle(e.target.value)}
+                      onChange={(e) => setNewTitle ? setNewTitle(e.target.value) : setMemoTitle(e.target.value)} // 방어 코드
+                      onInput={(e) => setMemoTitle((e.target as HTMLInputElement).value)}
                       placeholder="메모 제목"
                       className="w-full px-2 py-1.5 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400"
                     />
                   </div>
 
-                  <div className="flex-1 flex flex-col gap-1">
+                  <div className="flex-1 flex flex-col gap-1 min-h-0">
                     <label className="text-xs font-bold text-black shrink-0">내용:</label>
                     <textarea
                       value={memoContent}
                       onChange={(e) => setMemoContent(e.target.value)}
                       placeholder="내용을 입력하세요"
-                      className="w-full flex-1 p-2 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400 resize-none min-h-[90px]"
+                      className="w-full flex-1 p-2 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400 resize-none"
                     />
                   </div>
 
-                  <div className="flex justify-end pt-1">
+                  <div className="flex justify-end pt-1 shrink-0">
                     <button
                       type="submit"
-                      className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-3 py-1 rounded font-bold text-xs transition-colors"
+                      disabled={isLoading}
+                      className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-3 py-1 rounded font-bold text-xs transition-colors disabled:opacity-50"
                     >
                       저장
                     </button>
                   </div>
                 </form>
               ) : memoMode === 'edit' ? (
-                /*메모 수정 화면*/
+                /* 메모 수정 화면 */
                 <form onSubmit={handleUpdateMemo} className="flex flex-col h-full space-y-2">
-                  <div className="flex justify-between items-center border-b border-gray-200 pb-1">
+                  <div className="flex justify-between items-center border-b border-gray-200 pb-1 shrink-0">
                     <span className="font-black text-sm text-black">메모 수정</span>
                     <button
                       type="button"
@@ -919,7 +1104,7 @@ export default function CustomNotionCalendar() {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <label className="text-xs font-bold text-black shrink-0">제목:</label>
                     <input
                       type="text"
@@ -930,46 +1115,46 @@ export default function CustomNotionCalendar() {
                     />
                   </div>
 
-                  <div className="flex-1 flex flex-col gap-1">
+                  <div className="flex-1 flex flex-col gap-1 min-h-0">
                     <label className="text-xs font-bold text-black shrink-0">내용:</label>
                     <textarea
                       value={memoContent}
                       onChange={(e) => setMemoContent(e.target.value)}
                       placeholder="내용을 입력하세요"
-                      className="w-full flex-1 p-2 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400 resize-none min-h-[90px]"
+                      className="w-full flex-1 p-2 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400 resize-none"
                     />
                   </div>
                 
-                {/* 메모 수정 하단 버튼 */}
-                <div className="flex justify-between items-center pt-1">
-                  <button
-                    type="button"
-                    onClick={handleDeleteMemo}
-                    className="text-red-500 hover:text-red-700 font-bold text-xs transition-colors px-1 py-1"
-                  >
-                    삭제
-                  </button>
-                  <div className="flex items-center gap-1.5">
+                  {/* 메모 수정 하단 버튼 */}
+                  <div className="flex justify-between items-center pt-1 shrink-0">
                     <button
                       type="button"
-                      onClick={() => setMemoMode('detail')}
-                      className="px-3 py-1 rounded font-bold text-xs text-gray-700 hover:bg-gray-100 transition-colors"
+                      onClick={handleDeleteMemo}
+                      className="text-red-500 hover:text-red-700 font-bold text-xs transition-colors px-1 py-1"
                     >
-                      취소
+                      삭제
                     </button>
-                    <button
-                      type="submit"
-                      className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-3 py-1 rounded font-bold text-xs transition-colors"
-                    >
-                      저장
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setMemoMode('detail')}
+                        className="px-3 py-1 rounded font-bold text-xs text-gray-700 hover:bg-gray-100 transition-colors"
+                      >
+                        취소
+                      </button>
+                      <button
+                        type="submit"
+                        className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-3 py-1 rounded font-bold text-xs transition-colors"
+                      >
+                        저장
+                      </button>
+                    </div>
                   </div>
-                </div>
                 </form>
               ) : memoMode === 'detail' && selectedMemo ? (
                 /* 메모 상세 보기 화면 */
                 <div className="flex flex-col h-full space-y-2">
-                  <div className="flex justify-between items-center border-b border-gray-400 pb-1">
+                  <div className="flex justify-between items-center border-b border-gray-400 pb-1 shrink-0">
                     <span className="font-black text-sm text-black truncate pr-2">{selectedMemo.title}</span>
                     <div className="flex items-center gap-0.5 shrink-0">
                       <button
@@ -1002,8 +1187,8 @@ export default function CustomNotionCalendar() {
                 </div>
               ) : (
                 /* 메모 목록 화면 */
-                <>
-                  <div className="flex justify-between items-center mb-2">
+                <div className="flex flex-col h-full">
+                  <div className="flex justify-between items-center mb-2 shrink-0">
                     <h3 className="font-black text-xl text-black">메모</h3>
                     <button
                       type="button"
@@ -1019,9 +1204,9 @@ export default function CustomNotionCalendar() {
                     </button>
                   </div>
 
-                  <div className="flex-1 overflow-y-auto pr-1 space-y-2">
+                  <div className="flex-1 overflow-y-auto pr-1 space-y-2 min-h-0">
                     {getMemosForDate(selectedDate).length === 0 ? (
-                      <p className="text-xs font-bold text-gray-500">
+                      <p className="text-xs font-bold text-gray-500 py-2">
                         등록된 메모가 없습니다.
                       </p>
                     ) : (
@@ -1039,7 +1224,7 @@ export default function CustomNotionCalendar() {
                       ))
                     )}
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -1073,7 +1258,9 @@ export default function CustomNotionCalendar() {
                 <span key={d} className="text-xs font-bold text-gray-400">{d}</span>
               ))}
               {calendarDays.map((item) => {
-                const isSelected = myAvailableDates.includes(item.dateStr);
+                const isSelected = currentUser 
+                  ? allAvailabilities.some((a) => a.user_id === currentUser.id && a.date_str === item.dateStr)
+                  : false;
                 
                 if (!item.isCurrentMonth) {
                   return (
