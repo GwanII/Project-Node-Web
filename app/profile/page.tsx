@@ -113,36 +113,6 @@ async function extractOoxmlText(blob: Blob, kind: "pptx" | "docx"): Promise<stri
   return text.slice(0, MAX_CHARS_PER_FILE);
 }
 
-// pptx·docx 는 사실 zip 파일이에요. 안의 XML에서 글자만 긁어옵니다.
-async function extractOoxmlText(blob: Blob, kind: "pptx" | "docx"): Promise<string> {
-  const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
-
-  const entries = kind === "pptx"
-    ? Object.keys(zip.files)
-        .filter(n => /^ppt\/slides\/slide\d+\.xml$/.test(n))
-        .sort((a, b) => Number(a.match(/\d+/)![0]) - Number(b.match(/\d+/)![0]))
-    : ["word/document.xml"];
-
-  const tag = kind === "pptx" ? "a:t" : "w:t";
-  const re = new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`, "g");
-
-  let text = "";
-  for (const entry of entries) {
-    const file = zip.files[entry];
-    if (!file) continue;
-    const xml = await file.async("string");
-    const chunks: string[] = [];
-    let m: RegExpExecArray | null;
-    re.lastIndex = 0;
-    while ((m = re.exec(xml)) !== null) chunks.push(m[1]);
-    const joined = chunks.join(" ").replace(/\s+/g, " ").trim();
-    if (joined) text += joined + "\n";
-    if (text.length > MAX_CHARS_PER_FILE) break;
-  }
-  return text.slice(0, MAX_CHARS_PER_FILE);
-}
-
 async function readFileContent(storagePath: string, fileName: string): Promise<string | null> {
   const ext = extOf({ name: fileName, storage_path: storagePath });
   const isPdf   = ext === "pdf";
