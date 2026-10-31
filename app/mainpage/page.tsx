@@ -290,9 +290,9 @@ export default function MainPage() {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => window.location.reload()}
-              className="text-2xl font-extrabold tracking-tight text-gray-900 leading-tight text-left cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+              className="cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
             >
-              프로젝트<br />로고
+              <img src="/logo/cobalt-hub-logo.svg" alt="CobaltHUB" className="h-8 w-auto" />
             </button>
           </div>
           
