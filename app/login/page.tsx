@@ -131,6 +131,20 @@ function LoginPageInner() {
 
     console.log("로그인 성공:", data);
 
+    // 정지된 계정인지 확인
+    const { data: profileRow } = await supabase
+      .from("profiles")
+      .select("is_suspended")
+      .eq("id", data.user.id)
+      .maybeSingle();
+
+    if (profileRow?.is_suspended) {
+      await supabase.auth.signOut();
+      setLoading(false);
+      alert("정지된 계정입니다. 관리자에게 문의해주세요.");
+      return;
+    }
+
     // 이미 휴대폰 인증이 완료된 사용자
     if (data.user.phone) {
       router.push("/mainpage");

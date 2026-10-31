@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/src/lib/supabase";
+import { renderPromptTemplate } from "@/src/lib/promptTemplate";
 
 // ── 로컬 LLM(Ollama) 설정 ──
 const OLLAMA_URL   = process.env.NEXT_PUBLIC_OLLAMA_URL   ?? "http://localhost:11434/api/generate";
@@ -424,13 +425,19 @@ export default function ProfilePage() {
   };
 
   // ── 생성된 리포트를 DB에 저장 ──
-  const saveReport = async (result: ReportResult) => {
+  const saveReport = async (
+    result: ReportResult,
+    meta?: { promptVersion: number | null; durationMs: number; status: string }
+  ) => {
     const authId = await getAuthId();
     if (!authId) return;
     const { data, error } = await supabase.from("ai_reports").insert({
       user_id: authId,
       project_name: selectedProject.name,
       result,
+      prompt_version: meta?.promptVersion ?? null,
+      duration_ms: meta?.durationMs ?? null,
+      status: meta?.status ?? "success",
     }).select("id, project_name, created_at, result").single();
 
     if (error) { console.warn("리포트 저장 실패:", error.message); return; }
@@ -524,6 +531,9 @@ ${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && 
   const generateReport = async () => {
     setReportLoading(true);
     setGeminiResult(null);
+    const reportStartedAt = performance.now();
+    let liveVersionForLog: number | null = null;
+    let fallbackEnabledForLog = true;
 
     const localDoneCnt = todos.filter(t => t.done).length;
     const localPct = todos.length > 0 ? Math.round((localDoneCnt / todos.length) * 100) : 0;
@@ -650,8 +660,60 @@ ${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && 
       );
       const projectList = (projectData ?? []).map((p: {project_name: string; start_date: string; end_date: string}) => `${p.project_name}(${p.start_date}~${p.end_date})`);
 
-      // 2. 프롬프트 구성
-      const prompt = `당신은 취업 컨설턴트입니다. 대학생의 팀 프로젝트 기록을 분석해 자기소개서에 바로 쓸 수 있는 문장을 작성합니다.
+      // 2. 배포된 프롬프트 버전 조회 (실패하면 기존 하드코딩 프롬프트로 대체)
+      let livePrompt: {
+        version: number;
+        content: string;
+        model: string;
+        temperature: number;
+        fallbackEnabled: boolean;
+      } | null = null;
+      try {
+        const { data: liveRow } = await supabase
+          .from("prompt_versions")
+          .select("version, content, model, temperature, fallback_enabled")
+          .eq("key", "cover_letter")
+          .eq("is_live", true)
+          .maybeSingle();
+        if (liveRow) {
+          livePrompt = {
+            version: liveRow.version,
+            content: liveRow.content,
+            model: liveRow.model,
+            temperature: liveRow.temperature,
+            fallbackEnabled: liveRow.fallback_enabled,
+          };
+          liveVersionForLog = liveRow.version;
+          fallbackEnabledForLog = liveRow.fallback_enabled;
+        }
+      } catch (e) {
+        console.warn("배포된 프롬프트 조회 실패, 기본 프롬프트를 사용합니다:", e);
+      }
+
+      // 참고 자료(참여 프로젝트 / 진행 중인 할일 / 산출물 / 산출물 내용 / 회의 기록)를
+      // {{documents}} 변수 하나로 묶는다. DB에 저장된 템플릿이 이 블록을 그대로 쓴다.
+      const documentsBlock = [
+        projectList.length > 0 ? `[참여 프로젝트]\n${projectList.join("\n")}` : "",
+        pendingTodoList.length > 0 ? `[진행 중인 할일]\n${pendingTodoList.join("\n")}` : "",
+        fileList.length > 0 ? `[제작·업로드한 산출물]\n${fileList.join("\n")}` : "",
+        fileContents.length > 0 ? `[산출물 내용]\n${fileContents.join("\n\n")}` : "",
+        meetingList.length > 0 ? `[참여한 회의 기록]\n${meetingList.join("\n\n")}` : "",
+      ].filter(Boolean).join("\n\n") || "참고 자료 없음";
+
+      const promptModel = livePrompt?.model ?? OLLAMA_MODEL;
+      const promptTemperature = livePrompt?.temperature ?? 0.85;
+
+      const prompt = livePrompt
+        ? renderPromptTemplate(livePrompt.content, {
+            nickname: profileData?.nickname ?? nickname,
+            role: "UI 디자인",
+            project_name: selectedProject.name,
+            period: selectedProject.period,
+            done_todos: doneTodoList.length > 0 ? doneTodoList.join("\n") : "없음",
+            documents: documentsBlock,
+            contribution: String(localPct),
+          })
+        : `당신은 취업 컨설턴트입니다. 대학생의 팀 프로젝트 기록을 분석해 자기소개서에 바로 쓸 수 있는 문장을 작성합니다.
 
 [학생 정보]
 - 이름: ${profileData?.nickname ?? nickname}
@@ -746,12 +808,12 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: OLLAMA_MODEL,
+            model: promptModel,
             prompt: p,
             stream: false,
             format: "json",
             options: {
-              temperature: 0.85,      // 표현을 다양하게
+              temperature: promptTemperature,      // 배포된 버전 설정 (없으면 0.85)
               top_p: 0.92,
               repeat_penalty: 1.15,   // 같은 말 반복 억제
               num_predict: 3000,
@@ -861,11 +923,47 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
         ])),
       };
       setGeminiResult(result);
-      await saveReport(result);
+      await saveReport(result, {
+        promptVersion: livePrompt?.version ?? null,
+        durationMs: Math.round(performance.now() - reportStartedAt),
+        status: "success",
+      });
 
     } catch (err: unknown) {
       console.error("LLM 오류:", err);
-      // API 실패 시 예시 데이터로 대체
+      const failDurationMs = Math.round(performance.now() - reportStartedAt);
+      const failStatus = err instanceof SyntaxError ? "parse_error" : "timeout";
+
+      if (!fallbackEnabledForLog) {
+        // 관리자가 '실패 시 예시 데이터 대체'를 꺼둔 경우: 예시 데이터를 보여주지 않고
+        // 실패 사실만 로그에 남긴다. 화면은 기존 '다시 시도하기' 버튼으로 안내된다.
+        const authId = await getAuthId();
+        if (authId) {
+          await supabase.from("ai_reports").insert({
+            user_id: authId,
+            project_name: selectedProject.name,
+            result: { error: true, message: String(err) },
+            prompt_version: liveVersionForLog,
+            duration_ms: failDurationMs,
+            status: failStatus,
+          });
+        }
+        setReportLoading(false);
+        return;
+      }
+
+      // API 실패 시 예시 데이터로 대체 (fallback 로그도 함께 남긴다)
+      const authIdForFallback = await getAuthId();
+      if (authIdForFallback) {
+        await supabase.from("ai_reports").insert({
+          user_id: authIdForFallback,
+          project_name: selectedProject.name,
+          result: { fallback: true },
+          prompt_version: liveVersionForLog,
+          duration_ms: failDurationMs,
+          status: "fallback",
+        });
+      }
       setGeminiResult({
         summary: `${selectedProject.name} UI 디자인 총괄 · 기여도 ${localPct}%`,
         achievements: [
