@@ -691,9 +691,15 @@ export default function MainPage() {
                         <div>
                           <strong className="font-bold text-gray-900">[{item.project}]</strong> {item.text}
                         </div>
-                        <div className="text-gray-500 font-medium mt-1">
-                          ➔ {item.link}
-                        </div>
+                        {item.link && (
+                          <button
+                            type="button"
+                            onClick={() => router.push(item.link)}
+                            className="text-blue-600 font-medium mt-1 hover:underline"
+                          >
+                            ➔ 바로가기
+                          </button>
+                        )}
                       </div>
 
                       {/* 삭제 X 버튼 */}

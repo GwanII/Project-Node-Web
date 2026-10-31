@@ -541,6 +541,7 @@ export default function ProjectMainPage() {
 
   // Invite Form State
   const [inviteEmail, setInviteEmail] = useState("");
+  const [isInviting, setIsInviting] = useState(false);
 
   // Filtered lists for sidebar
   const filteredFiles = useMemo(() => {
@@ -693,48 +694,30 @@ export default function ProjectMainPage() {
     e.preventDefault();
     if (!inviteEmail.trim() || !projectId) return;
 
-    const { data: invitedProfile } = await supabase
-      .from("profiles")
-      .select("id, name")
-      .eq("email", inviteEmail.trim())
-      .maybeSingle();
+    setIsInviting(true);
+    try {
+      const res = await fetch("/api/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, email: inviteEmail.trim() }),
+      });
+      const json = await res.json();
 
-    if (!invitedProfile) {
-      alert(`${inviteEmail} 님은 아직 가입하지 않은 사용자입니다.`);
-      return;
+      if (!res.ok) {
+        alert(json?.error ?? "초대에 실패했습니다.");
+        return;
+      }
+
+      alert(
+        json.registered
+          ? `${inviteEmail} 님에게 초대 알림을 보냈습니다. 수락하면 팀원으로 추가됩니다.`
+          : `${inviteEmail} 님에게 초대 메일을 보냈습니다. 가입 후 수락하면 팀원으로 추가됩니다.`
+      );
+      setInviteEmail("");
+      setIsInviteModalOpen(false);
+    } finally {
+      setIsInviting(false);
     }
-
-    const { data: member, error } = await supabase
-      .from("project_members")
-      .insert({
-        project_id: projectId,
-        user_id: invitedProfile.id,
-        name: invitedProfile.name,
-        role: "팀원",
-        permission: "write",
-      })
-      .select("id")
-      .single();
-
-    if (error || !member) {
-      alert("팀원 추가 실패: " + (error?.message ?? "이미 참여 중인 팀원입니다."));
-      return;
-    }
-
-    setMembers((prev) => [
-      ...prev,
-      {
-        id: member.id,
-        userId: invitedProfile.id,
-        name: invitedProfile.name,
-        role: "팀원",
-        permission: "write",
-        progress: 0,
-      },
-    ]);
-    alert(`${invitedProfile.name} 님이 팀원으로 추가되었습니다.`);
-    setInviteEmail("");
-    setIsInviteModalOpen(false);
   };
 
   // 사이드바 항목 추가 팝업 상태 (파일/달력은 이름 입력, 자료는 파일 드래그 업로드)
@@ -1904,7 +1887,8 @@ export default function ProjectMainPage() {
                 className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
               <p className="text-xs text-gray-400">
-                이미 가입된 사용자만 팀원으로 추가할 수 있습니다.
+                가입된 사용자는 알림으로, 미가입자는 이메일로 초대가 가도록
+                보내고, 상대방이 수락하면 팀원으로 추가됩니다.
               </p>
             </div>
             <div className="pt-2 flex justify-end gap-2">
@@ -1917,9 +1901,10 @@ export default function ProjectMainPage() {
               </button>
               <button
                 type="submit"
-                className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm shadow-md transition-colors"
+                disabled={isInviting}
+                className="bg-[#8CA5FF] hover:bg-blue-600 text-white px-5 py-2 rounded-xl font-bold text-sm shadow-md transition-colors disabled:opacity-50"
               >
-                팀원으로 추가
+                {isInviting ? "보내는 중..." : "초대 보내기"}
               </button>
             </div>
           </form>
