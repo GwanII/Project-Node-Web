@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/src/lib/supabase";
 
 type PlanKey = "basic" | "premium" | "pro";
 
@@ -10,35 +11,68 @@ interface PlanInfo {
   name: string;
   price: string;
   priceLabel: string;
+  amount: number;
   features: string[];
 }
 
-const PLAN_INFO: Record<PlanKey, PlanInfo> = {
+// plans 테이블 조회가 실패할 때를 위한 대체값 (관리자 > 플랜 관리에서 관리)
+const FALLBACK_PLAN_INFO: Record<PlanKey, PlanInfo> = {
   basic: {
     name: "기본 플랜",
     price: "무료",
     priceLabel: "",
+    amount: 0,
     features: ["프로젝트 최대 8개 생성", "팀원 최대 5명 초대", "기본 통계 제공"],
   },
   premium: {
     name: "프리미엄 플랜",
     price: "₩9,900",
     priceLabel: "/ 월",
+    amount: 9900,
     features: ["프로젝트 무제한 생성", "팀원 무제한 초대", "고급 통계 및 리포트", "우선 고객 지원"],
   },
   pro: {
     name: "프로 플랜",
     price: "₩19,900",
     priceLabel: "/ 월",
+    amount: 19900,
     features: ["프리미엄 기능 모두 포함", "전담 매니저 배정", "API 연동 지원", "맞춤형 보안 설정"],
   },
 };
+
+function genOrderId() {
+  const n = Math.floor(100000 + Math.random() * 900000);
+  return `ND-${n}`;
+}
 
 function PaymentContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const planParam = searchParams.get("plan");
-  const plan = PLAN_INFO[(planParam as PlanKey) ?? "premium"] ?? PLAN_INFO.premium;
+  const planKey: PlanKey = (planParam as PlanKey) ?? "premium";
+
+  const [plan, setPlan] = useState<PlanInfo>(FALLBACK_PLAN_INFO[planKey] ?? FALLBACK_PLAN_INFO.premium);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("plans")
+        .select("name, price, price_label, features")
+        .eq("key", planKey)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (data) {
+        setPlan({
+          name: data.name,
+          price: data.price > 0 ? `₩${Number(data.price).toLocaleString("ko-KR")}` : "무료",
+          priceLabel: data.price_label ?? "",
+          amount: data.price,
+          features: data.features ?? [],
+        });
+      }
+    })();
+  }, [planKey]);
 
   const [cardNumber, setCardNumber] = useState("");
   const [expiry, setExpiry] = useState("");
@@ -46,14 +80,40 @@ function PaymentContent() {
   const [cardHolder, setCardHolder] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessing(true);
-    setTimeout(() => {
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
       setIsProcessing(false);
-      alert(`${plan.name} 결제가 완료되었습니다!`);
-      router.push("/mainpage");
-    }, 800);
+      alert("로그인이 필요합니다.");
+      return;
+    }
+
+    const last4 = cardNumber.replace(/[^0-9]/g, "").slice(-4) || "0000";
+
+    const { error } = await supabase.from("payments").insert({
+      id: genOrderId(),
+      user_id: user.id,
+      plan: plan.name,
+      amount: plan.amount,
+      method: `신용카드 (****${last4})`,
+      card_holder: cardHolder,
+      status: "완료",
+    });
+
+    setIsProcessing(false);
+
+    if (error) {
+      console.warn("결제 내역 저장 실패:", error.message);
+    }
+
+    alert(`${plan.name} 결제가 완료되었습니다!`);
+    router.push("/mainpage");
   };
 
   return (
@@ -171,7 +231,7 @@ function PaymentContent() {
                 : `${plan.price}${plan.priceLabel ? ` ${plan.priceLabel}` : ""} 결제하기`}
             </button>
             <p className="text-xs text-gray-400 text-center">
-              실제 결제가 이루어지지 않는 테스트 화면입니다.
+              실제 결제가 이루어지지 않는 테스트 화면입니다. (PG 미연동)
             </p>
           </form>
         </div>

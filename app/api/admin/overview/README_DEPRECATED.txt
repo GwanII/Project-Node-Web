@@ -1,0 +1,1 @@
+- deprecated, is_admin 컬럼이 role로 대체되어 더 이상 사용하지 않음. app/api/admin/members 로 교체됨.

@@ -50,6 +50,16 @@ function formatDeadlineLabel(endDate: string | null): string {
 export default function MainPage() {
   const router = useRouter();
 
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error("로그아웃 오류:", error);
+      alert("로그아웃 중 오류가 발생했습니다.");
+      return;
+    }
+    router.push("/login");
+  }
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [profileName, setProfileName] = useState("사용자");
 
@@ -280,9 +290,9 @@ export default function MainPage() {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => window.location.reload()}
-              className="text-2xl font-extrabold tracking-tight text-gray-900 leading-tight text-left cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
+              className="cursor-pointer hover:opacity-80 transition-opacity focus:outline-none"
             >
-              프로젝트<br />로고
+              <img src="/logo/cobalt-hub-logo.svg" alt="CobaltHUB" className="h-8 w-auto" />
             </button>
           </div>
           
@@ -343,7 +353,7 @@ export default function MainPage() {
 
                         <button
                           onClick={() => {
-                            alert("로그아웃 되었습니다.");
+                            handleLogout();
                             setIsUserMenuOpen(false);
                           }}
                           className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"
@@ -619,7 +629,7 @@ export default function MainPage() {
 
                 <button
                   onClick={() => {
-                    alert("로그아웃 되었습니다.");
+                    handleLogout();
                     setIsUserMenuOpen(false);
                   }}
                   className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"
@@ -681,9 +691,15 @@ export default function MainPage() {
                         <div>
                           <strong className="font-bold text-gray-900">[{item.project}]</strong> {item.text}
                         </div>
-                        <div className="text-gray-500 font-medium mt-1">
-                          ➔ {item.link}
-                        </div>
+                        {item.link && (
+                          <button
+                            type="button"
+                            onClick={() => router.push(item.link)}
+                            className="text-blue-600 font-medium mt-1 hover:underline"
+                          >
+                            ➔ 바로가기
+                          </button>
+                        )}
                       </div>
 
                       {/* 삭제 X 버튼 */}
