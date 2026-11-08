@@ -58,6 +58,7 @@ interface SidebarItem {
   type: "file" | "calendar" | "resource";
   subType?: "png" | "jpg" | "url" | "audio" | "ppt" | "file";
   storagePath?: string;
+  createdAt?: string;
 }
 
 interface VoteOption {
@@ -181,18 +182,6 @@ export default function ProjectMainPage() {
     if (error) return;
     setMembers((prev) => prev.filter((m) => m.id !== id));
   };
-
-  // Recent Tasks
-  const [recentTasks] = useState([
-    { id: 1, name: "5주차 회의록", type: "file", icon: "file" },
-    { id: 2, name: "프로젝트 기획서", type: "file", icon: "file" },
-    { id: 3, name: "캘린더 1", type: "calendar", icon: "calendar" },
-    { id: 4, name: "4주차 회의록", type: "file", icon: "file" },
-    { id: 5, name: "캘린더 2", type: "calendar", icon: "calendar" },
-    { id: 6, name: "3주차 회의록", type: "file", icon: "file" },
-    { id: 7, name: "2주차 회의록", type: "file", icon: "file" },
-    { id: 8, name: "1주차 회의록", type: "file", icon: "file" },
-  ]);
 
   // Votes
   const [votes, setVotes] = useState<VoteItem[]>([]);
@@ -326,7 +315,7 @@ export default function ProjectMainPage() {
 
       const { data: sidebarRows } = await supabase
         .from("project_sidebar_items")
-        .select("id, type, name, sub_type, storage_path")
+        .select("id, type, name, sub_type, storage_path, created_at")
         .eq("project_id", projectId)
         .order("position", { ascending: true })
         .order("created_at", { ascending: true });
@@ -337,6 +326,7 @@ export default function ProjectMainPage() {
           type: row.type as SidebarItem["type"],
           subType: (row.sub_type ?? undefined) as SidebarItem["subType"],
           storagePath: row.storage_path ?? undefined,
+          createdAt: row.created_at ?? undefined,
         });
         setFiles(sidebarRows.filter((r) => r.type === "file").map(toItem));
         setCalendars(sidebarRows.filter((r) => r.type === "calendar").map(toItem));
@@ -561,6 +551,23 @@ export default function ProjectMainPage() {
   const recentResources = useMemo(() => {
     return [...resources].slice(-8).reverse();
   }, [resources]);
+
+  // 대시보드 "최신 작업" 카드에 띄울 가장 최근에 추가된 파일/캘린더 8개
+  const recentTasks = useMemo(() => {
+    return [...files, ...calendars]
+      .sort((a, b) => {
+        const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return bt - at;
+      })
+      .slice(0, 8)
+      .map((item) => ({
+        id: item.id,
+        name: item.name,
+        type: item.type,
+        icon: item.type === "calendar" ? "calendar" : "file",
+      }));
+  }, [files, calendars]);
 
   // Handlers
   const toggleTodo = async (id: string) => {
@@ -1251,6 +1258,7 @@ export default function ProjectMainPage() {
         return (
           <>
             <div className={`${cardTitle} mb-3.5`}>최신 작업</div>
+            {recentTasks.length === 0 && <div className="py-6 text-center text-[13px] text-[#8A8FAD]">아직 작업 내역이 없습니다.</div>}
             <div className="grid grid-cols-4 gap-2.5">
               {recentTasks.map((task) => (
                 <div key={task.id} className={tileClass}>
