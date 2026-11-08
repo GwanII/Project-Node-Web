@@ -36,6 +36,7 @@ import {
   Shuffle,
   Rows3,
   House,
+  LogOut,
 } from "lucide-react";
 
 // Types
@@ -1007,13 +1008,14 @@ export default function ProjectMainPage() {
 
   // 2x2 대시보드 카드 순서 및 드래그로 위치 맞바꾸기
   type DashboardCardKey = "team" | "recent" | "vote" | "todo" | "resources" | "minigame";
+  // 벤토 슬롯 순서. 슬롯 크기는 위치에 고정(BENTO_SLOT_SPANS), 카드끼리 드래그로 자리 맞바꾸기
   const [cardOrder, setCardOrder] = useState<DashboardCardKey[]>([
     "team",
-    "recent",
-    "vote",
     "todo",
-    "resources",
+    "vote",
     "minigame",
+    "recent",
+    "resources",
   ]);
   const [draggedCardKey, setDraggedCardKey] = useState<DashboardCardKey | null>(null);
   const [cardDragOverKey, setCardDragOverKey] = useState<DashboardCardKey | null>(null);
@@ -1044,80 +1046,203 @@ export default function ProjectMainPage() {
     setCardDragOverKey(null);
   };
 
+  // ---------- 벤토 대시보드 UI 헬퍼 ----------
+  const BENTO_SLOT_SPANS = ["lg:col-span-8", "lg:col-span-4", "lg:col-span-4", "lg:col-span-4", "lg:col-span-6", "lg:col-span-6"];
+  const MEMBER_TINTS = ["#DDE5FF", "#F3EAD3", "#DCEFE0", "#F6DFDD", "#D6EEF2"];
+  const compactDDay = (label: string) =>
+    label.replace("D - Day ", "D-").replace("D - Day", "D-Day").replace("D + ", "D+");
+
+  // 좌측 아이콘 레일 → 팝오버 패널
+  type PanelKey = "files" | "calendars" | "resources";
+  const [openPanel, setOpenPanel] = useState<PanelKey | null>(null);
+  const panelConfig: Record<
+    PanelKey,
+    { name: string; icon: typeof FileText; items: SidebarItem[]; total: number; search: string; setSearch: (v: string) => void }
+  > = {
+    files: { name: "파일", icon: FileText, items: filteredFiles, total: files.length, search: fileSearch, setSearch: setFileSearch },
+    calendars: { name: "달력", icon: CalendarIcon, items: filteredCalendars, total: calendars.length, search: calendarSearch, setSearch: setCalendarSearch },
+    resources: { name: "자료 보관함", icon: Folder, items: filteredResources, total: resources.length, search: resourceSearch, setSearch: setResourceSearch },
+  };
+  const PANEL_ORDER: PanelKey[] = ["files", "calendars", "resources"];
+
+  const renderItemIcon = (item: SidebarItem) => {
+    if (item.type === "calendar") return <CalendarIcon className="w-4 h-4 text-[#6B7090] shrink-0" />;
+    if (item.type === "file") return <FileText className="w-4 h-4 text-[#6B7090] shrink-0" />;
+    switch (item.subType) {
+      case "png":
+      case "jpg":
+        return <FileImage className="w-4 h-4 text-[#6B7090] shrink-0" />;
+      case "url":
+        return <LinkIcon className="w-4 h-4 text-[#6B7090] shrink-0" />;
+      case "audio":
+        return <Mic className="w-4 h-4 text-[#6B7090] shrink-0" />;
+      case "ppt":
+        return <Presentation className="w-4 h-4 text-[#6B7090] shrink-0" />;
+      default:
+        return <FileText className="w-4 h-4 text-[#6B7090] shrink-0" />;
+    }
+  };
+
+  // 상단 바 통합 검색 (파일·달력·자료)
+  const [globalSearch, setGlobalSearch] = useState("");
+  const globalResults = useMemo(() => {
+    const q = globalSearch.trim().toLowerCase();
+    if (!q) return [];
+    return [...files, ...calendars, ...resources].filter((i) => i.name.toLowerCase().includes(q)).slice(0, 8);
+  }, [globalSearch, files, calendars, resources]);
+
+  const cardShell = "bg-white rounded-[20px] px-[26px] py-6 shadow-[0_1px_2px_rgba(31,35,64,0.05)]";
+  const cardTitle = "text-[17px] font-bold";
+  const iconBtn = "p-1.5 rounded-lg text-[#8A8FAD] hover:text-[#3D5BD9] hover:bg-[#F4F6FC] transition-colors";
+  const tileClass =
+    "flex flex-col items-center gap-2 px-1.5 py-3.5 rounded-[14px] bg-[#F7F8FD] hover:bg-[#E6EBFF] cursor-pointer transition-colors min-w-0";
+
   const renderDashboardCard = (key: DashboardCardKey) => {
     switch (key) {
       case "team":
         return (
           <>
-            {/* Card Title Bar */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <Users className="w-5 h-5 text-gray-700" />
-                <span>팀원 현황</span>
-              </div>
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between mb-[18px]">
+              <span className={cardTitle}>팀원 현황</span>
+              <button onClick={() => setIsMemberSettingsModalOpen(true)} className={iconBtn} title="팀 설정">
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-5 gap-3 mt-auto">
+              {members.map((member, i) => (
                 <button
-                  onClick={() => setIsInviteModalOpen(true)}
-                  className="bg-[#8CA5FF] hover:bg-blue-600 text-white font-bold text-xs px-3 py-1.5 rounded-xl transition-colors shadow-sm flex items-center gap-1"
+                  key={member.id}
+                  onClick={() => router.push("/profile")}
+                  title={`${member.name} 프로필 보기`}
+                  className="flex flex-col gap-2.5 p-4 rounded-[14px] bg-[#F7F8FD] hover:bg-[#EEF1FB] text-left transition-colors"
                 >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>초대하기</span>
+                  <div
+                    className="w-10 h-10 rounded-full text-[15px] font-bold flex items-center justify-center"
+                    style={{ background: MEMBER_TINTS[i % MEMBER_TINTS.length] }}
+                  >
+                    {member.name.charAt(0)}
+                  </div>
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className="text-[15px] font-bold flex items-center gap-1 truncate">
+                      {member.name}
+                      {member.isLeader && <Crown className="w-3.5 h-3.5 text-amber-500 fill-amber-400 shrink-0" />}
+                    </span>
+                    <span className="text-xs text-[#8A8FAD]">{member.role}</span>
+                  </div>
+                  <span className="text-2xl font-bold tracking-[-0.02em] text-[#3D5BD9]">{member.progress}%</span>
+                  <span className="h-1.5 rounded-full bg-[#E3E7F5] overflow-hidden">
+                    <span className="block h-full bg-[#8CA5FF] rounded-full" style={{ width: `${member.progress}%` }} />
+                  </span>
                 </button>
+              ))}
+            </div>
+          </>
+        );
+
+      case "todo":
+        return (
+          <>
+            <div className="flex items-center justify-between mb-2.5">
+              <span className={cardTitle}>TO DO LIST</span>
+              <button onClick={() => setIsAddTodoModalOpen(true)} className={iconBtn} title="할 일 추가">
+                <Plus className="w-[18px] h-[18px]" />
+              </button>
+            </div>
+            {todos.length === 0 && <div className="py-6 text-center text-[13px] text-[#8A8FAD]">할 일이 없습니다.</div>}
+            <div className="flex flex-col max-h-[260px] overflow-y-auto">
+              {todos.map((todo) => (
                 <button
-                  onClick={() => setIsMemberSettingsModalOpen(true)}
-                  className="p-1.5 text-gray-500 hover:text-gray-800 rounded-lg hover:bg-gray-100 transition-colors"
-                  title="팀 설정"
+                  key={todo.id}
+                  onClick={() => toggleTodo(todo.id)}
+                  className="flex items-center gap-3 py-2.5 border-b border-[#EEF0F7] last:border-b-0 text-left"
                 >
-                  <Settings className="w-4 h-4" />
+                  <span
+                    className={`w-[18px] h-[18px] rounded-full border-2 shrink-0 flex items-center justify-center text-[10px] font-bold text-white ${todo.completed ? "border-[#8CA5FF] bg-[#8CA5FF]" : "border-[#C9CEE6] bg-white"}`}
+                  >
+                    {todo.completed && "✓"}
+                  </span>
+                  <span className={`text-sm font-semibold flex-1 min-w-0 truncate ${todo.completed ? "line-through text-[#A5A9C4]" : ""}`}>
+                    {todo.text}
+                  </span>
+                  <span className="text-xs font-bold text-[#3D5BD9] bg-[#E6EBFF] px-2.5 py-[3px] rounded-full shrink-0">
+                    {compactDDay(todo.dDay)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        );
+
+      case "vote":
+        return (
+          <>
+            <div className="flex items-center justify-between mb-2.5">
+              <span className={cardTitle}>투표</span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setIsNewVoteModalOpen(true)}
+                  className="text-xs font-bold text-white bg-[#3D5BD9] hover:bg-[#2A44B8] px-3 py-1 rounded-full transition-colors"
+                >
+                  NEW
+                </button>
+                <button onClick={() => router.push("/voterecord")} className={iconBtn} title="투표 기록으로 이동">
+                  <House className="w-4 h-4" />
                 </button>
               </div>
             </div>
-
-            {/* Members Horizontal Grid */}
-            <div className="grid grid-cols-5 gap-3 items-end pt-2 pb-1">
-              {members.map((member) => (
-                <div
-                  key={member.id}
-                  className="flex flex-col items-center text-center space-y-2 group"
-                >
-                  {/* Crown icon for leader */}
-                  <div className="h-6 flex items-center justify-center">
-                    {member.isLeader && (
-                      <Crown className="w-5 h-5 text-amber-500 fill-amber-400 animate-bounce" />
-                    )}
-                  </div>
-
-                  {/* Avatar Circle */}
-                  <button
-                    onClick={() => router.push("/profile")}
-                    title={`${member.name} 프로필 보기`}
-                    className="w-16 h-16 rounded-full border-2 border-gray-200 bg-gray-50 flex items-center justify-center text-gray-600 shadow-sm group-hover:border-blue-400 group-hover:bg-blue-50 transition-all focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <User className="w-8 h-8" />
-                  </button>
-
-                  {/* Name & Role */}
-                  <div className="space-y-1">
-                    <div className="font-extrabold text-base text-gray-900 leading-tight">
-                      {member.name}
+            {votes.length === 0 && <div className="py-6 text-center text-[13px] text-[#8A8FAD]">진행 중인 투표가 없습니다.</div>}
+            <div className="flex flex-col max-h-[260px] overflow-y-auto">
+              {votes.map((vote) => {
+                const pill =
+                  vote.status === "completed"
+                    ? { label: "종료", cls: "text-[#6B7090] bg-[#EEF0F7]" }
+                    : vote.hasVoted
+                    ? { label: "참여 완료", cls: "text-[#6B7090] bg-[#EEF0F7]" }
+                    : { label: "미참여", cls: "text-[#C4332B] bg-[#FDEBEC]" };
+                return (
+                  <div key={vote.id} className="flex flex-col gap-1 py-2.5 border-b border-[#EEF0F7] last:border-b-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold truncate">{vote.title}</span>
+                      <span className={`text-xs font-bold px-2.5 py-[3px] rounded-full shrink-0 ${pill.cls}`}>{pill.label}</span>
                     </div>
-                    <div className="text-sm font-medium text-gray-500">
-                      {member.role}
-                    </div>
-                  </div>
-
-                  {/* Progress Pill Bar */}
-                  <div className="w-full max-w-[84px] bg-gray-100 rounded-full h-5 relative overflow-hidden border border-gray-200 flex items-center justify-center">
-                    <div
-                      className="bg-[#FF4D4D] h-full absolute left-0 top-0 transition-all duration-300 rounded-full"
-                      style={{ width: `${member.progress}%` }}
-                    />
-                    <span className="relative z-10 text-xs font-bold text-gray-900 leading-none">
-                      {member.progress}%
+                    <span className="text-xs text-[#8A8FAD]">
+                      {vote.participantsCount}명 참여 · {vote.deadline}
                     </span>
                   </div>
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          </>
+        );
+
+      case "minigame":
+        return (
+          <>
+            <div className="flex items-center justify-between">
+              <span className={cardTitle}>미니게임</span>
+              <button
+                onClick={() => router.push("/minigamearchive")}
+                className="p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition-colors"
+                title="미니게임 보관함으로 이동"
+              >
+                <House className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-2.5 mt-auto pt-6">
+              <button
+                onClick={openDrawLotsModal}
+                className="flex items-center gap-3 p-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.16] text-[15px] font-semibold transition-colors"
+              >
+                <Shuffle className="w-[18px] h-[18px] opacity-85" />
+                제비뽑기
+              </button>
+              <button
+                onClick={openLadderModal}
+                className="flex items-center gap-3 p-4 rounded-[14px] bg-white/[0.08] hover:bg-white/[0.16] text-[15px] font-semibold transition-colors"
+              >
+                <Rows3 className="w-[18px] h-[18px] opacity-85" />
+                사다리타기
+              </button>
             </div>
           </>
         );
@@ -1125,29 +1250,16 @@ export default function ProjectMainPage() {
       case "recent":
         return (
           <>
-            {/* Card Header */}
-            <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg mb-4">
-              <Clock className="w-5 h-5 text-gray-700" />
-              <span>최신 작업</span>
-            </div>
-
-            {/* Items Grid (위 4개 / 아래 4개, 총 8개) */}
-            <div className="grid grid-cols-4 gap-x-3 gap-y-4 items-start justify-items-center">
+            <div className={`${cardTitle} mb-3.5`}>최신 작업</div>
+            <div className="grid grid-cols-4 gap-2.5">
               {recentTasks.map((task) => (
-                <div
-                  key={task.id}
-                  className="flex flex-col items-center text-center space-y-2 cursor-pointer group"
-                >
-                  <div className="w-14 h-14 rounded-2xl bg-white border-2 border-gray-800 flex items-center justify-center text-gray-800 shadow-md group-hover:scale-105 group-hover:border-blue-600 group-hover:text-blue-600 transition-all">
-                    {task.icon === "file" ? (
-                      <FileText className="w-7 h-7 stroke-[1.8]" />
-                    ) : (
-                      <CalendarIcon className="w-7 h-7 stroke-[1.8]" />
-                    )}
-                  </div>
-                  <span className="font-extrabold text-xs text-gray-800 group-hover:text-blue-600 transition-colors truncate max-w-[76px]">
-                    {task.name}
-                  </span>
+                <div key={task.id} className={tileClass}>
+                  {task.icon === "file" ? (
+                    <FileText className="w-[22px] h-[22px] text-[#6B7090]" />
+                  ) : (
+                    <CalendarIcon className="w-[22px] h-[22px] text-[#6B7090]" />
+                  )}
+                  <span className="text-xs font-semibold max-w-full truncate">{task.name}</span>
                 </div>
               ))}
             </div>
@@ -1157,216 +1269,18 @@ export default function ProjectMainPage() {
       case "resources":
         return (
           <>
-            {/* Card Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <Folder className="w-5 h-5 text-gray-700" />
-                <span>자료 보관함</span>
-              </div>
-              <button
-                onClick={() => router.push("/storage")}
-                className="p-1.5 text-gray-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
-                title="자료 보관함으로 이동"
-              >
-                <House className="w-4 h-4" />
+            <div className="flex items-center justify-between mb-3.5">
+              <span className={cardTitle}>자료 보관함</span>
+              <button onClick={() => router.push("/storage")} className="text-[13px] font-semibold text-[#3D5BD9] hover:underline">
+                전체 보기
               </button>
             </div>
-
-            {/* 가장 최근에 사용한 자료 8개 (위 4개 / 아래 4개) */}
-            <div className="grid grid-cols-4 gap-x-3 gap-y-4 items-start justify-items-center">
+            {recentResources.length === 0 && <div className="py-6 text-center text-[13px] text-[#8A8FAD]">아직 자료가 없습니다.</div>}
+            <div className="grid grid-cols-4 gap-2.5">
               {recentResources.map((resource) => (
-                <div
-                  key={resource.id}
-                  className="flex flex-col items-center text-center space-y-2 cursor-pointer group"
-                >
-                  <div className="w-14 h-14 rounded-2xl bg-white border-2 border-gray-800 flex items-center justify-center text-gray-800 shadow-md group-hover:scale-105 group-hover:border-blue-600 group-hover:text-blue-600 transition-all">
-                    {resource.subType === "png" || resource.subType === "jpg" ? (
-                      <FileImage className="w-7 h-7 stroke-[1.8]" />
-                    ) : resource.subType === "url" ? (
-                      <LinkIcon className="w-7 h-7 stroke-[1.8]" />
-                    ) : resource.subType === "audio" ? (
-                      <Mic className="w-7 h-7 stroke-[1.8]" />
-                    ) : resource.subType === "ppt" ? (
-                      <Presentation className="w-7 h-7 stroke-[1.8]" />
-                    ) : (
-                      <FileText className="w-7 h-7 stroke-[1.8]" />
-                    )}
-                  </div>
-                  <span className="font-extrabold text-xs text-gray-800 group-hover:text-blue-600 transition-colors truncate max-w-[76px]">
-                    {resource.name}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
-        );
-
-      case "minigame":
-        return (
-          <>
-            {/* Card Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <Dices className="w-5 h-5 text-gray-700" />
-                <span>미니게임</span>
-              </div>
-              <button
-                onClick={() => router.push("/minigamearchive")}
-                className="p-1.5 text-gray-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
-                title="미니게임 보관함으로 이동"
-              >
-                <House className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* 미니게임 목록 */}
-            <div className="grid grid-cols-2 gap-3 flex-1">
-              <button
-                onClick={openDrawLotsModal}
-                className="group rounded-2xl border-2 border-[#8CA5FF] hover:bg-blue-50/40 hover:border-blue-500 transition-all flex flex-col items-center justify-center gap-2 py-6 text-[#8CA5FF] group-hover:text-blue-600 font-bold text-sm"
-              >
-                <Shuffle className="w-7 h-7 group-hover:text-blue-600 transition-colors" />
-                <span className="group-hover:text-blue-600 transition-colors">제비뽑기</span>
-              </button>
-              <button
-                onClick={openLadderModal}
-                className="group rounded-2xl border-2 border-[#8CA5FF] hover:bg-blue-50/40 hover:border-blue-500 transition-all flex flex-col items-center justify-center gap-2 py-6 text-[#8CA5FF] group-hover:text-blue-600 font-bold text-sm"
-              >
-                <Rows3 className="w-7 h-7 group-hover:text-blue-600 transition-colors" />
-                <span className="group-hover:text-blue-600 transition-colors">사다리타기</span>
-              </button>
-            </div>
-          </>
-        );
-
-      case "vote":
-        return (
-          <>
-            {/* Card Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <span className="bg-gray-100 border border-gray-300 text-gray-800 text-xs font-black px-2 py-0.5 rounded uppercase tracking-wider">
-                  VOTE
-                </span>
-                <span>투표</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => setIsNewVoteModalOpen(true)}
-                  className="bg-[#8CA5FF] hover:bg-blue-600 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl transition-colors shadow-sm"
-                >
-                  NEW
-                </button>
-                <button
-                  onClick={() => router.push("/voterecord")}
-                  className="p-1.5 text-gray-500 hover:text-blue-600 rounded-lg hover:bg-gray-100 transition-colors"
-                  title="투표 기록으로 이동"
-                >
-                  <House className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* 2 Column Voting Layout */}
-            <div className="grid grid-cols-2 gap-4 divide-x divide-gray-100">
-              {/* Column 1: 진행중인 투표 */}
-              <div className="space-y-3 pr-2">
-                <h4 className="text-xs font-bold text-gray-600">진행중인 투표</h4>
-                <div className="space-y-3">
-                  {votes
-                    .filter((v) => v.status === "in-progress")
-                    .map((vote) => (
-                      <div key={vote.id} className="space-y-1">
-                        <div className="flex items-center gap-2 text-gray-900 font-bold text-sm">
-                          <Circle className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span>&quot;{vote.title}&quot;</span>
-                        </div>
-                        <div className="pl-5 text-[11px] font-medium text-gray-600 flex items-center gap-2">
-                          <span>{vote.participantsCount}명 참여</span>
-                          <span className="text-gray-400">•</span>
-                          <span className={vote.hasVoted ? "text-gray-800 font-semibold" : "text-red-500"}>
-                            {vote.hasVoted ? "참여 완료" : "참여 X"}
-                          </span>
-                        </div>
-                        <div className="pl-5 text-[10px] font-medium text-gray-600">
-                          {vote.deadline}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* Column 2: 완료된 투표 */}
-              <div className="space-y-3 pl-4">
-                <h4 className="text-xs font-bold text-gray-600">완료된 투표</h4>
-                <div className="space-y-3">
-                  {votes
-                    .filter((v) => v.status === "completed")
-                    .map((vote) => (
-                      <div key={vote.id} className="space-y-1">
-                        <div className="flex items-center gap-2 text-gray-900 font-bold text-sm">
-                          <Circle className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                          <span>&quot;{vote.title}&quot;</span>
-                        </div>
-                        <div className="pl-5 text-[11px] font-medium text-gray-600 flex items-center gap-2">
-                          <span>{vote.participantsCount}명 참여</span>
-                          <span className="text-gray-400">•</span>
-                          <span className="text-gray-800 font-semibold">참여 완료</span>
-                        </div>
-                        <div className="pl-5 text-[10px] font-medium text-gray-600">
-                          {vote.deadline}
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </div>
-          </>
-        );
-
-      case "todo":
-        return (
-          <>
-            {/* Card Header */}
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-gray-900 font-extrabold text-lg">
-                <ListTodo className="w-5 h-5 text-gray-700" />
-                <span>TO DO LIST</span>
-              </div>
-              <button
-                onClick={() => setIsAddTodoModalOpen(true)}
-                className="p-1 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors"
-                title="할 일 추가"
-              >
-                <Plus className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Todo Item List */}
-            <div className="space-y-3 flex-1">
-              {todos.map((todo) => (
-                <div
-                  key={todo.id}
-                  onClick={() => toggleTodo(todo.id)}
-                  className="flex items-center justify-between p-2 rounded-xl hover:bg-gray-50 cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-2.5">
-                    {todo.completed ? (
-                      <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
-                    ) : (
-                      <Circle className="w-4 h-4 text-gray-400 shrink-0" />
-                    )}
-                    <span
-                      className={`text-sm font-bold text-gray-900 ${
-                        todo.completed ? "line-through text-gray-400" : ""
-                      }`}
-                    >
-                      &quot;{todo.text}&quot;
-                    </span>
-                  </div>
-                  <span className="text-[11px] font-semibold text-gray-600 bg-gray-100 px-2 py-0.5 rounded-full">
-                    {todo.dDay}
-                  </span>
+                <div key={resource.id} className={tileClass}>
+                  {renderItemIcon(resource)}
+                  <span className="text-xs font-semibold max-w-full truncate">{resource.name}</span>
                 </div>
               ))}
             </div>
@@ -1380,13 +1294,10 @@ export default function ProjectMainPage() {
 
   if (notFound) {
     return (
-      <div className="flex h-screen items-center justify-center bg-white text-gray-800">
+      <div className="flex h-screen items-center justify-center bg-[#F4F6FC] text-[#1F2340]">
         <div className="text-center space-y-3">
           <p className="text-lg font-bold">존재하지 않거나 접근 권한이 없는 프로젝트입니다.</p>
-          <button
-            onClick={() => router.push("/mainpage")}
-            className="text-sm font-semibold text-blue-600 hover:underline"
-          >
+          <button onClick={() => router.push("/mainpage")} className="text-sm font-semibold text-[#3D5BD9] hover:underline">
             메인페이지로 돌아가기
           </button>
         </div>
@@ -1394,379 +1305,247 @@ export default function ProjectMainPage() {
     );
   }
 
+  const activePanel = openPanel ? panelConfig[openPanel] : null;
+
   return (
-    <div className="flex h-screen bg-white text-gray-800 overflow-hidden font-sans select-none">
-      {/* ========================================================================= */}
-      {/* 1. LEFT SIDEBAR (LIGHT BLUE / INDIGO SOFT THEME) */}
-      {/* ========================================================================= */}
-      <aside
-        className={`transition-all duration-300 bg-[#DDE5FF] border-r border-blue-200/80 flex flex-col z-20 shadow-md ${
-          isSidebarCollapsed ? "w-16" : "w-72"
-        }`}
-      >
-        {/* Sidebar Header: D-Day & Collapse Button */}
-        <div className="p-4 flex items-center justify-between border-b border-blue-200/60">
-          {!isSidebarCollapsed && (
-            <div className="flex flex-col">
-              <h2 className="text-2xl font-extrabold text-gray-900 tracking-tight">
-                {projectDDay}
-              </h2>
-              <span className="text-xs font-semibold text-gray-600 mt-0.5">
-                {projectDeadlineLabel}
-              </span>
+    <div className="min-h-screen bg-[#F4F6FC] text-[#1F2340] antialiased flex flex-col select-none">
+      {/* 상단 바 (메인페이지와 공통) */}
+      <header className="h-[68px] shrink-0 flex items-center gap-6 px-6 md:px-10 relative z-40">
+        <Link href="/mainpage" className="shrink-0 hover:opacity-80 transition-opacity">
+          <img src="/logo/cobalt-hub-logo.svg" alt="CobaltHUB" className="h-[26px] w-auto" />
+        </Link>
+
+        <div className="flex-1 max-w-[440px] mx-auto relative">
+          <label className="flex items-center gap-2 bg-white rounded-full px-4 py-2.5 text-sm shadow-[0_1px_2px_rgba(31,35,64,0.06)] focus-within:ring-2 focus-within:ring-[#8CA5FF]">
+            <Search className="w-[15px] h-[15px] text-[#8A8FAD] shrink-0" />
+            <input
+              type="text"
+              placeholder="이 프로젝트에서 검색"
+              value={globalSearch}
+              onChange={(e) => setGlobalSearch(e.target.value)}
+              className="flex-1 min-w-0 bg-transparent outline-none placeholder-[#8A8FAD]"
+            />
+            {globalSearch && (
+              <button onClick={() => setGlobalSearch("")} title="검색 지우기">
+                <X className="w-4 h-4 text-[#8A8FAD]" />
+              </button>
+            )}
+          </label>
+          {globalSearch.trim() && (
+            <div className="absolute left-0 right-0 top-full mt-2 bg-white rounded-2xl p-2 shadow-[0_4px_12px_rgba(31,35,64,0.08),0_16px_40px_rgba(31,35,64,0.14)]">
+              {globalResults.length === 0 ? (
+                <div className="px-3 py-4 text-center text-[13px] text-[#8A8FAD]">검색 결과가 없습니다.</div>
+              ) : (
+                globalResults.map((item) => (
+                  <div key={item.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-[#F4F6FC] text-sm">
+                    {renderItemIcon(item)}
+                    <span className="truncate flex-1">{item.name}</span>
+                    <span className="text-xs text-[#8A8FAD]">
+                      {item.type === "file" ? "파일" : item.type === "calendar" ? "달력" : "자료"}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           )}
-          <button
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className="p-1.5 rounded-lg hover:bg-blue-300/50 text-gray-700 transition-colors ml-auto"
-            title={isSidebarCollapsed ? "사이드바 펼치기" : "사이드바 접기"}
-          >
-            {isSidebarCollapsed ? (
-              <ChevronRight className="w-5 h-5" />
-            ) : (
-              <ChevronLeft className="w-5 h-5" />
-            )}
-          </button>
         </div>
 
-        {/* Sidebar Scrollable Body */}
-        {!isSidebarCollapsed ? (
-          <div className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-thin">
-            {/* Section 1: 파일 (Files) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-gray-900 font-bold text-base">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-gray-700" />
-                  <span>파일</span>
-                </div>
-              </div>
-
-              {/* Search Bar */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="검색"
-                    value={fileSearch}
-                    onChange={(e) => setFileSearch(e.target.value)}
-                    className="w-full bg-white text-xs pl-8 pr-3 py-1.5 rounded-full border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-700 shadow-sm"
-                  />
-                </div>
-                <button
-                  onClick={() => setAddItemModal("files")}
-                  className="p-1 bg-white border border-blue-200 rounded-full hover:bg-blue-50 text-gray-700 transition-colors shadow-sm"
-                  title="파일 추가"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* File Item List */}
-              <div className="space-y-1 pt-1">
-                {filteredFiles.map((file) => (
-                  <div
-                    key={file.id}
-                    draggable
-                    onDragStart={() => handleDragStart("files", file.id)}
-                    onDragOver={(e) => handleDragOverItem(e, file.id)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      handleDrop("files", file.id);
-                    }}
-                    onDragEnd={handleDragEnd}
-                    onContextMenu={(e) => handleItemContextMenu(e, "files", file.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/60 text-gray-800 text-sm font-semibold transition-colors ${
-                      draggedItem?.id === file.id ? "opacity-40" : ""
-                    } ${
-                      dragOverId === file.id && draggedItem?.id !== file.id
-                        ? "ring-2 ring-blue-400 bg-white/80"
-                        : ""
-                    }`}
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    <FileText className="w-4 h-4 text-gray-600 shrink-0" />
-                    <span className="truncate">{file.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section 2: 달력 (Calendar) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-gray-900 font-bold text-base">
-                <div className="flex items-center gap-2">
-                  <CalendarIcon className="w-4 h-4 text-gray-700" />
-                  <span>달력</span>
-                </div>
-              </div>
-
-              {/* Search Bar */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="검색"
-                    value={calendarSearch}
-                    onChange={(e) => setCalendarSearch(e.target.value)}
-                    className="w-full bg-white text-xs pl-8 pr-3 py-1.5 rounded-full border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-700 shadow-sm"
-                  />
-                </div>
-                <button
-                  onClick={() => setAddItemModal("calendars")}
-                  className="p-1 bg-white border border-blue-200 rounded-full hover:bg-blue-50 text-gray-700 transition-colors shadow-sm"
-                  title="달력 추가"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Calendar Item List */}
-              <div className="space-y-1 pt-1">
-                {filteredCalendars.map((cal) => (
-                  <div
-                    key={cal.id}
-                    draggable
-                    onDragStart={() => handleDragStart("calendars", cal.id)}
-                    onDragOver={(e) => handleDragOverItem(e, cal.id)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      handleDrop("calendars", cal.id);
-                    }}
-                    onDragEnd={handleDragEnd}
-                    onContextMenu={(e) => handleItemContextMenu(e, "calendars", cal.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/60 text-gray-800 text-sm font-semibold transition-colors ${
-                      draggedItem?.id === cal.id ? "opacity-40" : ""
-                    } ${
-                      dragOverId === cal.id && draggedItem?.id !== cal.id
-                        ? "ring-2 ring-blue-400 bg-white/80"
-                        : ""
-                    }`}
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    <CalendarIcon className="w-4 h-4 text-gray-600 shrink-0" />
-                    <span className="truncate">{cal.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Section 3: 자료 보관함 (Archive/Resources) */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-gray-900 font-bold text-base">
-                <div className="flex items-center gap-2">
-                  <Folder className="w-4 h-4 text-gray-700" />
-                  <span>자료 보관함</span>
-                </div>
-              </div>
-
-              {/* Search Bar */}
-              <div className="flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="검색"
-                    value={resourceSearch}
-                    onChange={(e) => setResourceSearch(e.target.value)}
-                    className="w-full bg-white text-xs pl-8 pr-3 py-1.5 rounded-full border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-400 text-gray-700 shadow-sm"
-                  />
-                </div>
-                <button
-                  onClick={() => setAddItemModal("resources")}
-                  className="p-1 bg-white border border-blue-200 rounded-full hover:bg-blue-50 text-gray-700 transition-colors shadow-sm"
-                  title="자료 추가"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Resource Item List */}
-              <div className="space-y-1 pt-1">
-                {filteredResources.map((res) => (
-                  <div
-                    key={res.id}
-                    draggable
-                    onDragStart={() => handleDragStart("resources", res.id)}
-                    onDragOver={(e) => handleDragOverItem(e, res.id)}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      handleDrop("resources", res.id);
-                    }}
-                    onDragEnd={handleDragEnd}
-                    onContextMenu={(e) => handleItemContextMenu(e, "resources", res.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-white/60 text-gray-800 text-sm font-semibold transition-colors ${
-                      draggedItem?.id === res.id ? "opacity-40" : ""
-                    } ${
-                      dragOverId === res.id && draggedItem?.id !== res.id
-                        ? "ring-2 ring-blue-400 bg-white/80"
-                        : ""
-                    }`}
-                  >
-                    <GripVertical className="w-3.5 h-3.5 text-gray-400 shrink-0" />
-                    {res.subType === "png" && (
-                      <span className="bg-[#B0C7FF] text-[#1E3A8A] text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-300">
-                        PNG
-                      </span>
-                    )}
-                    {res.subType === "jpg" && (
-                      <span className="bg-[#B0C7FF] text-[#1E3A8A] text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-300">
-                        JPG
-                      </span>
-                    )}
-                    {res.subType === "url" && (
-                      <LinkIcon className="w-4 h-4 text-gray-600 shrink-0" />
-                    )}
-                    {res.subType === "audio" && (
-                      <Mic className="w-4 h-4 text-gray-600 shrink-0" />
-                    )}
-                    {res.subType === "ppt" && (
-                      <span className="bg-[#B0C7FF] text-[#1E3A8A] text-[10px] font-bold px-1.5 py-0.5 rounded border border-blue-300">
-                        PPT
-                      </span>
-                    )}
-                    {res.subType === "file" && (
-                      <FileText className="w-4 h-4 text-gray-600 shrink-0" />
-                    )}
-                    <span className="truncate">{res.name}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        ) : (
-          /* Collapsed Icon Bar */
-          <div className="flex-1 overflow-y-auto p-2 space-y-6 flex flex-col items-center pt-6">
-            <button title="파일" className="p-2 hover:bg-white/50 rounded-lg text-gray-700">
-              <FileText className="w-5 h-5" />
-            </button>
-            <button title="달력" className="p-2 hover:bg-white/50 rounded-lg text-gray-700">
-              <CalendarIcon className="w-5 h-5" />
-            </button>
-            <button title="자료 보관함" className="p-2 hover:bg-white/50 rounded-lg text-gray-700">
-              <Folder className="w-5 h-5" />
-            </button>
-          </div>
-        )}
-      </aside>
-
-      {/* ========================================================================= */}
-      {/* 2. MAIN CONTENT AREA */}
-      {/* ========================================================================= */}
-      <main className="flex-1 overflow-y-auto flex flex-col min-w-0 bg-white">
-        {/* Top Header */}
-        <header className="px-8 py-5 flex items-center justify-between bg-white border-b border-gray-100 sticky top-0 z-10">
-          <div className="flex items-center gap-3">
-            <Link
-              href="/mainpage"
-              className="flex items-center gap-1.5 text-sm font-semibold text-gray-600 hover:text-gray-900 transition-colors bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg border border-gray-200 shadow-sm"
-              title="메인 목록으로 돌아가기"
+        <div className="flex items-center gap-2.5 text-sm shrink-0">
+          <span className="hidden md:inline text-[#6B7090]">기본 플랜</span>
+          <button onClick={() => setIsUpgradeModalOpen(true)} className="hidden md:inline font-semibold text-[#3D5BD9] hover:underline">
+            업그레이드
+          </button>
+          <div className="relative ml-1.5" ref={userMenuRef}>
+            <button
+              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+              title={`${activeAccount}님`}
+              className="w-[34px] h-[34px] rounded-full bg-[#8CA5FF] text-white text-[13px] font-bold flex items-center justify-center hover:ring-4 hover:ring-[#DDE5FF] transition"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span>메인페이지</span>
-            </Link>
-          </div>
-
-          <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 tracking-tight">
-            {projectTitle}
-          </h1>
-
-          <div className="relative" ref={userMenuRef}>
-            <div className="flex items-center space-x-2 text-gray-700 text-sm font-medium">
-              <span>
-                <span className="relative inline-block">
-                  <strong
-                    onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                    className="text-blue-600 font-semibold cursor-pointer hover:underline"
+              {activeAccount.charAt(0)}
+            </button>
+            {isUserMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-52 bg-white rounded-2xl p-2 z-50 shadow-[0_4px_12px_rgba(31,35,64,0.08),0_16px_40px_rgba(31,35,64,0.14)] text-sm">
+                <div className="px-3 py-2 text-[13px] text-[#6B7090]">
+                  <strong className="font-semibold text-[#1F2340]">{activeAccount}</strong>님 환영합니다
+                </div>
+                {[
+                  { label: "플랜 업그레이드", icon: Crown, onClick: () => setIsUpgradeModalOpen(true) },
+                  { label: "사용자 프로필", icon: User, onClick: () => router.push("/profile") },
+                  { label: "계정 변경", icon: Settings, onClick: () => setIsAccountSwitchModalOpen(true) },
+                ].map(({ label, icon: Icon, onClick }) => (
+                  <button
+                    key={label}
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onClick();
+                    }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-[#F4F6FC] text-left"
                   >
-                    {activeAccount}
-                  </strong>
+                    <Icon className="w-4 h-4 text-[#6B7090]" />
+                    {label}
+                  </button>
+                ))}
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    setIsUserMenuOpen(false);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-[#FDEBEC] text-[#C4332B] text-left"
+                >
+                  <LogOut className="w-4 h-4" />
+                  로그아웃
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
 
-                  {/* 사용자 드롭다운 메뉴 */}
-                  {isUserMenuOpen && (
-                    <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-800 shadow-2xl rounded-lg p-3 z-50 animate-fadeIn space-y-2 text-sm text-gray-900 font-semibold">
-                      <button
-                        onClick={() => {
-                          setIsUpgradeModalOpen(true);
-                          setIsUserMenuOpen(false);
-                        }}
-                        className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
-                      >
-                        <svg className="w-4 h-4 text-gray-800 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3l3.057 6.114L12 4l3.943 5.114L19 3v15H5V3z" />
-                        </svg>
-                        <span className="underline underline-offset-4">플랜 업그레이드</span>
-                      </button>
+      <div className="flex-1 flex gap-6 pl-4 md:pl-6 pr-6 md:pr-10 pt-4 pb-10 relative">
+        {/* 팝오버 바깥 클릭 시 닫기 */}
+        {openPanel && <div className="fixed inset-0 z-20" onClick={() => setOpenPanel(null)} />}
 
-                      <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          router.push("/profile");
-                        }}
-                        className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
-                      >
-                        <svg className="w-4 h-4 text-gray-800 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                        <span className="underline underline-offset-4">사용자 프로필</span>
-                      </button>
+        {/* 아이콘 레일 */}
+        <aside className="z-30 w-14 shrink-0 self-start sticky top-4 bg-white rounded-[20px] flex flex-col items-center py-3 gap-1.5 shadow-[0_1px_2px_rgba(31,35,64,0.05)]">
+          <Link
+            href="/mainpage"
+            title="메인페이지로 돌아가기"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-[#8A8FAD] hover:bg-[#F4F6FC] hover:text-[#1F2340] transition-colors"
+          >
+            <ArrowLeft className="w-[18px] h-[18px]" />
+          </Link>
+          <div className="w-7 h-px bg-[#EEF0F7] my-1" />
+          {PANEL_ORDER.map((key, index) => {
+            const { name, icon: Icon } = panelConfig[key];
+            const active = openPanel === key;
+            return (
+              <div key={key} className="relative">
+                <button
+                  onClick={() => setOpenPanel(active ? null : key)}
+                  title={name}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${active ? "bg-[#E6EBFF] text-[#3D5BD9]" : "text-[#8A8FAD] hover:bg-[#F4F6FC] hover:text-[#1F2340]"}`}
+                >
+                  <Icon className="w-[18px] h-[18px]" />
+                </button>
 
+                {/* 팝오버 패널 */}
+                {active && activePanel && (
+                  <div
+                    className="absolute left-[calc(100%+20px)] -top-5 w-[264px] bg-white rounded-[20px] px-4 py-5 flex flex-col gap-3.5 shadow-[0_4px_12px_rgba(31,35,64,0.08),0_16px_40px_rgba(31,35,64,0.14)]"
+                    data-panel-index={index}
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[17px] font-bold">{activePanel.name}</span>
+                      <span className="text-xs font-semibold text-[#6B7090] bg-[#EEF0F7] px-2 py-0.5 rounded-full">{activePanel.total}</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="flex-1 flex items-center gap-2 bg-[#F4F6FC] rounded-full px-3 py-2 text-[13px] focus-within:ring-2 focus-within:ring-[#8CA5FF]">
+                        <Search className="w-3.5 h-3.5 text-[#8A8FAD] shrink-0" />
+                        <input
+                          type="text"
+                          placeholder="검색"
+                          value={activePanel.search}
+                          onChange={(e) => activePanel.setSearch(e.target.value)}
+                          className="flex-1 min-w-0 bg-transparent outline-none placeholder-[#8A8FAD]"
+                        />
+                      </label>
                       <button
-                        onClick={() => {
-                          setIsUserMenuOpen(false);
-                          setIsAccountSwitchModalOpen(true);
-                        }}
-                        className="w-full text-left flex items-center gap-2.5 hover:text-blue-600 py-1 transition-colors group"
+                        onClick={() => setAddItemModal(key)}
+                        title={`${activePanel.name} 추가`}
+                        className="w-[34px] h-[34px] rounded-full bg-[#3D5BD9] hover:bg-[#2A44B8] text-white flex items-center justify-center shrink-0 transition-colors"
                       >
-                        <svg className="w-4 h-4 text-gray-800 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="underline underline-offset-4">계정 변경</span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          handleLogout();
-                          setIsUserMenuOpen(false);
-                        }}
-                        className="w-full text-left flex items-center gap-2.5 hover:text-red-600 py-1 transition-colors group"
-                      >
-                        <svg className="w-4 h-4 text-gray-800 group-hover:text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                        </svg>
-                        <span className="underline underline-offset-4">로그아웃</span>
+                        <Plus className="w-4 h-4" />
                       </button>
                     </div>
-                  )}
-                </span>
-                님 환영합니다
-              </span>
-              <div className="w-8 h-8 rounded-full border-2 border-gray-300 flex items-center justify-center text-gray-500 bg-gray-50 hover:border-blue-400">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-                </svg>
+                    <div className="flex flex-col gap-0.5 max-h-[420px] overflow-y-auto scrollbar-thin">
+                      {activePanel.items.length === 0 && (
+                        <div className="py-6 text-center text-[13px] text-[#8A8FAD]">항목이 없습니다.</div>
+                      )}
+                      {activePanel.items.map((item) => (
+                        <div
+                          key={item.id}
+                          draggable
+                          onDragStart={() => handleDragStart(key, item.id)}
+                          onDragOver={(e) => handleDragOverItem(e, item.id)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            handleDrop(key, item.id);
+                          }}
+                          onDragEnd={handleDragEnd}
+                          onContextMenu={(e) => handleItemContextMenu(e, key, item.id)}
+                          className={`group flex items-center gap-2.5 px-2.5 py-[9px] rounded-xl text-sm font-medium hover:bg-[#F4F6FC] cursor-pointer transition-colors ${draggedItem?.id === item.id ? "opacity-40" : ""} ${dragOverId === item.id && draggedItem?.id !== item.id ? "ring-2 ring-[#8CA5FF] bg-[#F4F6FC]" : ""}`}
+                        >
+                          <GripVertical className="w-[13px] h-[13px] text-[#C9CEE6] shrink-0 opacity-0 group-hover:opacity-100" />
+                          {renderItemIcon(item)}
+                          <span className="flex-1 truncate">{item.name}</span>
+                          {(item.subType === "png" || item.subType === "jpg" || item.subType === "ppt") && (
+                            <span className="text-[10px] font-bold text-[#3D5BD9] bg-[#E6EBFF] px-1.5 py-0.5 rounded-md">
+                              {item.subType.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="text-xs text-[#8A8FAD] px-1">드래그로 순서 변경 · 우클릭으로 삭제</div>
+                  </div>
+                )}
               </div>
+            );
+          })}
+        </aside>
+
+        {/* 본문 */}
+        <main className="flex-1 min-w-0 flex flex-col gap-5">
+          <div className="flex flex-wrap items-end justify-between gap-4 pt-2 px-1">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm text-[#6B7090]">
+                <Link href="/mainpage" className="hover:underline">
+                  내 프로젝트
+                </Link>{" "}
+                / {projectTitle}
+              </span>
+              <h1 className="text-[28px] md:text-[32px] font-bold tracking-[-0.025em]">{projectTitle}</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex">
+                {members.slice(0, 5).map((m, i) => (
+                  <div
+                    key={m.id}
+                    title={m.name}
+                    className="w-[30px] h-[30px] rounded-full border-2 border-[#F4F6FC] -ml-1.5 first:ml-0 text-[11px] font-bold flex items-center justify-center"
+                    style={{ background: MEMBER_TINTS[i % MEMBER_TINTS.length] }}
+                  >
+                    {m.name.charAt(0)}
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setIsInviteModalOpen(true)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#3D5BD9] hover:bg-[#2A44B8] text-white text-sm font-semibold transition-colors"
+              >
+                <UserPlus className="w-[15px] h-[15px]" />
+                초대하기
+              </button>
             </div>
           </div>
-        </header>
 
-        {/* Content Body Container */}
-        <div className="p-6 md:p-8 space-y-6 max-w-7xl mx-auto w-full">
-          {/* Banner Button: 프로젝트 설명 */}
-          <div className="w-full">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            {/* D-Day / 프로젝트 설명 카드 (고정) */}
             <button
               onClick={() => setIsDescModalOpen(true)}
-              className="w-full bg-[#8CA5FF] hover:bg-blue-600 text-white py-4 px-6 rounded-2xl shadow-md transition-all duration-200 flex items-center justify-center font-bold text-base md:text-lg tracking-tight cursor-pointer hover:shadow-lg hover:-translate-y-0.5 active:translate-y-0 text-center leading-snug"
+              className="lg:col-span-4 bg-[#8CA5FF] hover:bg-[#7F99FA] text-white rounded-[20px] p-[26px] flex flex-col min-h-[260px] text-left transition-colors"
             >
-              실시간 소통과 팀원 작업 상황 공유, 회의록 및 자료 보관을 한 번에 관리하는 차세대 팀 프로젝트 협업 플랫폼입니다.
+              <span className="text-sm font-semibold">{projectDeadlineLabel}</span>
+              <span className="text-[72px] xl:text-[88px] font-extrabold tracking-[-0.04em] leading-none mt-auto">
+                {compactDDay(projectDDay)}
+              </span>
+              <span className="text-sm leading-relaxed mt-4 font-medium line-clamp-3">
+                {projectDescription ||
+                  "실시간 소통과 팀원 작업 상황 공유, 회의록 및 자료 보관을 한 번에 관리하는 차세대 팀 프로젝트 협업 플랫폼입니다."}
+              </span>
             </button>
-          </div>
 
-          {/* 대시보드 카드 그리드 (드래그로 위치 맞바꾸기 가능) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {cardOrder.map((key) => (
+            {cardOrder.map((key, slot) => (
               <div
                 key={key}
                 onDragOver={(e) => handleCardDragOver(e, key)}
@@ -1774,15 +1553,9 @@ export default function ProjectMainPage() {
                   e.preventDefault();
                   handleCardDrop(key);
                 }}
-                className={`relative bg-white rounded-2xl pt-6 px-6 pb-6 border-2 border-[#8CA5FF] shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between min-h-[250px] ${
-                  draggedCardKey === key ? "opacity-40" : ""
-                } ${
-                  cardDragOverKey === key && draggedCardKey !== key
-                    ? "ring-4 ring-blue-200 border-blue-500"
-                    : ""
-                }`}
+                className={`group relative flex flex-col ${BENTO_SLOT_SPANS[slot]} ${key === "minigame" ? "bg-[#1F2340] text-white rounded-[20px] px-[26px] py-6" : cardShell} ${draggedCardKey === key ? "opacity-40" : ""} ${cardDragOverKey === key && draggedCardKey !== key ? "ring-4 ring-[#8CA5FF]/50" : ""}`}
               >
-                {/* 박스 위치 이동용 드래그 핸들 */}
+                {/* 카드 자리 바꾸기용 드래그 핸들 (hover 시 노출) */}
                 <button
                   type="button"
                   draggable
@@ -1791,18 +1564,17 @@ export default function ProjectMainPage() {
                     handleCardDragStart(key);
                   }}
                   onDragEnd={handleCardDragEnd}
-                  title="박스 위치 이동"
-                  className="absolute -top-3.5 -left-3.5 w-7 h-7 rounded-full bg-white border-2 border-[#8CA5FF] shadow-sm flex items-center justify-center text-gray-400 hover:text-blue-600 hover:border-blue-500 cursor-grab active:cursor-grabbing transition-colors z-20"
+                  title="카드 위치 이동"
+                  className="absolute -top-2.5 -left-2.5 w-6 h-6 rounded-full bg-white shadow-[0_1px_4px_rgba(31,35,64,0.15)] flex items-center justify-center text-[#8A8FAD] hover:text-[#3D5BD9] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition z-10"
                 >
-                  <GripVertical className="w-4 h-4" />
+                  <GripVertical className="w-3.5 h-3.5" />
                 </button>
-
                 {renderDashboardCard(key)}
               </div>
             ))}
           </div>
-        </div>
-      </main>
+        </main>
+      </div>
 
       {/* ========================================================================= */}
       {/* MODALS */}
