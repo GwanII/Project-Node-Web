@@ -550,7 +550,7 @@ export default function MainPage() {
               </button>
               <button
                 onClick={() => {
-                  alert("프리미엄 결제 페이지로 이동합니다.");
+                  router.push("/payment?plan=premium");
                   setIsUpgradeModalOpen(false);
                 }}
                 className="flex-1 py-2.5 bg-[#3D5BD9] hover:bg-[#2A44B8] text-white text-sm font-semibold rounded-full transition"
