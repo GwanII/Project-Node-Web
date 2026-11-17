@@ -289,6 +289,93 @@ export function ungroupObjects(doc: Y.Doc, ids: string[], origin: object): void 
   }, origin);
 }
 
+// ---------------------------------------------------------------------------
+// 겹침 순서
+// ---------------------------------------------------------------------------
+
+/**
+ * 고른 것을 맨 앞으로 보낸다.
+ *
+ * order 가 큰 쪽이 위에 그려진다. 고른 것들끼리의 차례는 그대로 두고
+ * 나머지보다 뒤 번호를 주면 된다.
+ */
+export function bringToFront(doc: Y.Doc, ids: string[], origin: object): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  const picked = ids
+    .map((id) => objects.get(id))
+    .filter((o): o is SlideObject => !!o)
+    .sort((a, b) => a.order - b.order);
+  if (picked.length === 0) return;
+
+  const slideId = picked[0].slideId;
+  const top = Math.max(
+    ...readObjects(doc, slideId).map((o) => o.order),
+    0
+  );
+  doc.transact(() => {
+    picked.forEach((o, i) => objects.set(o.id, { ...o, order: top + 1 + i }));
+  }, origin);
+}
+
+/** 고른 것을 맨 뒤로 보낸다. */
+export function sendToBack(doc: Y.Doc, ids: string[], origin: object): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  const picked = ids
+    .map((id) => objects.get(id))
+    .filter((o): o is SlideObject => !!o)
+    .sort((a, b) => a.order - b.order);
+  if (picked.length === 0) return;
+
+  const slideId = picked[0].slideId;
+  const bottom = Math.min(
+    ...readObjects(doc, slideId).map((o) => o.order),
+    0
+  );
+  doc.transact(() => {
+    // 뒤에서부터 번호를 매겨야 고른 것들끼리의 차례가 유지된다.
+    picked.forEach((o, i) =>
+      objects.set(o.id, { ...o, order: bottom - picked.length + i })
+    );
+  }, origin);
+}
+
+/** 고른 것들의 색을 한꺼번에 바꾼다. patch 에 넣은 것만 바뀐다. */
+export function paintObjects(
+  doc: Y.Doc,
+  ids: string[],
+  patch: { fill?: string; stroke?: string },
+  origin: object
+): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  doc.transact(() => {
+    ids.forEach((id) => {
+      const o = objects.get(id);
+      if (o) objects.set(id, { ...o, ...patch });
+    });
+  }, origin);
+}
+
+/** 고른 것들을 상대 거리만큼 옮긴다. 방향키로 미세 조정할 때 쓴다. */
+export function nudgeObjects(
+  doc: Y.Doc,
+  ids: string[],
+  dx: number,
+  dy: number,
+  origin: object
+): void {
+  if (ids.length === 0) return;
+  const objects = objectsOf(doc);
+  doc.transact(() => {
+    ids.forEach((id) => {
+      const o = objects.get(id);
+      if (o) objects.set(id, { ...o, x: o.x + dx, y: o.y + dy });
+    });
+  }, origin);
+}
+
 /** 고른 것 중에 묶인 게 있는지 */
 export function hasGroupedObject(doc: Y.Doc, ids: string[]): boolean {
   const objects = objectsOf(doc);

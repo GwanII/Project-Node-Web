@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap" rel="stylesheet" />
+<style>
+  body { margin:0; background:#ffffff; font-family:'Noto Sans KR', system-ui, sans-serif; color:#1f2437; }
+  a { color:#4f46e5; text-decoration:none; }
+  a:hover { color:#3730a3; }
+  textarea, input, select, button { font-family:inherit; }
+</style>
+</helmet>
+<div style="display:flex; min-height:100vh; background:#ffffff;">
+
+  <aside style="width:248px; flex:0 0 248px; background:#dfe6fd; padding:26px 18px 28px; box-sizing:border-box; display:flex; flex-direction:column; gap:24px; position:sticky; top:0; height:100vh;">
+    <div style="display:flex; flex-direction:column; gap:6px;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:10.5px; font-weight:900; color:#4f46e5; border:1.5px solid #4f46e5; border-radius:6px; padding:2px 6px; background:#ffffff;">ADMIN</span>
+      </div>
+      <div style="font-size:22px; font-weight:900; letter-spacing:-0.5px;">프로젝트 NODE</div>
+      <div style="font-size:12px; color:#5b6178;">/admin · 관리자 콘솔</div>
+    </div>
+
+    <nav style="display:flex; flex-direction:column; gap:3px;">
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="8">
+        <div onClick="{{ n.select }}" style="display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:10px; font-size:14px; cursor:pointer; border:1.5px solid; border-color:{{ n.border }}; background:{{ n.bg }}; color:{{ n.color }}; font-weight:{{ n.weight }};">
+          <span style="width:18px; text-align:center; font-size:13px;">{{ n.icon }}</span>
+          <span style="flex:1;">{{ n.label }}</span>
+          <sc-if value="{{ n.badge }}" hint-placeholder-val="{{ false }}">
+            <span style="font-size:10.5px; font-weight:700; color:#ffffff; background:#e5484d; border-radius:999px; padding:1px 7px;">{{ n.badge }}</span>
+          </sc-if>
+        </div>
+      </sc-for>
+    </nav>
+
+    <div style="margin-top:auto; display:flex; flex-direction:column; gap:12px;">
+      <a href="#" style="display:flex; align-items:center; justify-content:center; gap:6px; border:1.5px solid #c7d2fe; border-radius:10px; padding:9px; font-size:13px; font-weight:500; color:#2b3149; background:#ffffff;">← 서비스로 돌아가기</a>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="width:36px; height:36px; border-radius:50%; background:#1f2437; color:#ffffff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;">박</div>
+        <div>
+          <div style="font-size:13px; font-weight:700;">박성빈</div>
+          <div style="font-size:11.5px; color:#5b6178;">최고 관리자</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <main style="flex:1; min-width:0; display:flex; flex-direction:column;">
+    <header style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:20px 34px; border-bottom:1px solid #eef1fb; flex-wrap:wrap;">
+      <div>
+        <div style="font-size:12px; color:#9aa3b8;">관리자 / {{ current.label }}</div>
+        <h1 style="margin:4px 0 0; font-size:22px; font-weight:900; letter-spacing:-0.5px;">{{ current.label }}</h1>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div style="display:flex; align-items:center; gap:8px; border:1px solid #c7d2fe; border-radius:999px; padding:8px 14px; width:240px; box-sizing:border-box;">
+          <span style="color:#9aa3b8; font-size:12px;">⌕</span>
+          <span style="color:#9aa3b8; font-size:12.5px;">회원, 주문번호, 프로젝트 검색</span>
+        </div>
+        <div style="font-size:12px; color:#6b7280; border:1px solid #c7d2fe; border-radius:999px; padding:8px 14px;">2026/11/01 기준</div>
+      </div>
+    </header>
+
+    <div style="padding:26px 34px 56px; display:flex; flex-direction:column; gap:20px;">
+
+      <!-- 대시보드 -->
+      <sc-if value="{{ is.dashboard }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex; flex-direction:column; gap:20px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr)); gap:14px;">
+            <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+              <div style="border:1.5px solid #c7d2fe; border-radius:16px; padding:18px 20px; background:#ffffff;">
+                <div style="font-size:12px; font-weight:700; color:#6b7280;">{{ k.label }}</div>
+                <div style="margin-top:8px; display:flex; align-items:baseline; gap:6px;">
+                  <span style="font-size:26px; font-weight:900; letter-spacing:-0.5px;">{{ k.value }}</span>
+                  <span style="font-size:12px; color:#9aa3b8;">{{ k.unit }}</span>
+                </div>
+                <div style="margin-top:6px; font-size:12px; font-weight:700; color:{{ k.deltaColor }};">{{ k.delta }}</div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:18px; align-items:stretch;">
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px 24px; display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-size:16px; font-weight:900; letter-spacing:-0.3px;">최근 14일 매출</div>
+                <div style="font-size:12px; color:#9aa3b8;">단위: 천원</div>
+              </div>
+              <div style="display:flex; align-items:flex-end; gap:8px; height:180px; padding-top:10px; border-bottom:1px solid #e6ebfb;">
+                <sc-for list="{{ chart }}" as="c" hint-placeholder-count="14">
+                  <div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:6px; height:100%;">
+                    <span style="font-size:10px; color:#9aa3b8;">{{ c.v }}</span>
+                    <div style="width:100%; max-width:26px; border-radius:6px 6px 0 0; background:{{ c.color }}; height:{{ c.h }};"></div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <sc-for list="{{ chart }}" as="c" hint-placeholder-count="14">
+                  <div style="flex:1; text-align:center; font-size:10.5px; color:#9aa3b8;">{{ c.d }}</div>
+                </sc-for>
+              </div>
+            </section>
+
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px 24px; display:flex; flex-direction:column; gap:16px;">
+              <div style="font-size:16px; font-weight:900; letter-spacing:-0.3px;">플랜 분포</div>
+              <div style="display:flex; flex-direction:column; gap:14px;">
+                <sc-for list="{{ planDist }}" as="p" hint-placeholder-count="3">
+                  <div>
+                    <div style="display:flex; justify-content:space-between; font-size:13px;">
+                      <span style="font-weight:700;">{{ p.name }}</span>
+                      <span style="color:#6b7280;">{{ p.count }}명 · {{ p.pct }}</span>
+                    </div>
+                    <div style="margin-top:7px; height:8px; border-radius:999px; background:#e6ebfb; overflow:hidden;">
+                      <div style="height:100%; border-radius:999px; background:{{ p.color }}; width:{{ p.pct }};"></div>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="margin-top:auto; border-top:1px solid #eef1fb; padding-top:14px; display:flex; flex-direction:column; gap:9px;">
+                <div style="font-size:13px; font-weight:700;">시스템 상태</div>
+                <sc-for list="{{ systems }}" as="s" hint-placeholder-count="4">
+                  <div style="display:flex; align-items:center; gap:8px; font-size:12.5px;">
+                    <span style="width:8px; height:8px; border-radius:50%; background:{{ s.dot }};"></span>
+                    <span style="flex:1;">{{ s.name }}</span>
+                    <span style="color:{{ s.color }}; font-weight:700;">{{ s.status }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </section>
+          </div>
+
+          <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:start;">
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px 24px; display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-size:16px; font-weight:900; letter-spacing:-0.3px;">최근 결제</div>
+                <div onClick="{{ goPayments }}" style="font-size:12.5px; font-weight:700; color:#4f46e5; cursor:pointer;">전체 보기 →</div>
+              </div>
+              <sc-for list="{{ recentPayments }}" as="r" hint-placeholder-count="5">
+                <div style="display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid #f1f3f9;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:13.5px; font-weight:700;">{{ r.user }} <span style="font-weight:400; color:#6b7280;">· {{ r.plan }}</span></div>
+                    <div style="font-size:11.5px; color:#9aa3b8; margin-top:2px;">{{ r.date }}</div>
+                  </div>
+                  <span style="font-size:13.5px; font-weight:700;">{{ r.amount }}</span>
+                  <span style="font-size:10.5px; font-weight:700; border-radius:999px; padding:2px 8px; border:1px solid; color:{{ r.sColor }}; background:{{ r.sBg }}; border-color:{{ r.sBorder }};">{{ r.status }}</span>
+                </div>
+              </sc-for>
+            </section>
+
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px 24px; display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-size:16px; font-weight:900; letter-spacing:-0.3px;">처리 필요</div>
+                <div style="font-size:12px; color:#9aa3b8;">{{ todoCount }}건</div>
+              </div>
+              <sc-for list="{{ adminTodos }}" as="t" hint-placeholder-count="4">
+                <div onClick="{{ t.go }}" style="display:flex; align-items:center; gap:12px; border:1.5px solid #e6ebfb; border-radius:12px; padding:12px 14px; cursor:pointer;" style-hover="background:#f8faff; border-color:#c7d2fe;">
+                  <span style="font-size:10.5px; font-weight:700; color:{{ t.tagColor }}; background:{{ t.tagBg }}; border-radius:6px; padding:2px 7px;">{{ t.tag }}</span>
+                  <span style="flex:1; font-size:13.5px;">{{ t.text }}</span>
+                  <span style="font-size:12px; color:#9aa3b8;">›</span>
+                </div>
+              </sc-for>
+            </section>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 회원 관리 -->
+      <sc-if value="{{ is.members }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+            <div style="display:flex; gap:8px;">
+              <sc-for list="{{ memberFilters }}" as="f" hint-placeholder-count="4">
+                <div onClick="{{ f.select }}" style="padding:7px 15px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; border:1px solid; border-color:{{ f.border }}; background:{{ f.bg }}; color:{{ f.color }};">{{ f.label }}</div>
+              </sc-for>
+            </div>
+            <div style="font-size:12.5px; color:#6b7280;">{{ memberCount }}</div>
+          </div>
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; overflow:hidden;">
+            <div style="display:grid; grid-template-columns:1.1fr 1.6fr 0.9fr 0.8fr 0.9fr 0.8fr 0.9fr; gap:12px; padding:13px 20px; background:#f8faff; font-size:12px; font-weight:700; color:#6b7280; border-bottom:1px solid #e6ebfb;">
+              <span>이름</span><span>이메일</span><span>플랜</span><span>프로젝트</span><span>가입일</span><span>인증</span><span style="text-align:right;">상태</span>
+            </div>
+            <sc-for list="{{ members }}" as="m" hint-placeholder-count="8">
+              <div style="display:grid; grid-template-columns:1.1fr 1.6fr 0.9fr 0.8fr 0.9fr 0.8fr 0.9fr; gap:12px; padding:13px 20px; font-size:13px; align-items:center; border-bottom:1px solid #f1f3f9;">
+                <div style="display:flex; align-items:center; gap:9px;">
+                  <span style="width:28px; height:28px; border-radius:50%; background:#eef2ff; color:#4f46e5; font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;">{{ m.initial }}</span>
+                  <span style="font-weight:700;">{{ m.name }}</span>
+                </div>
+                <span style="color:#5b6178; overflow:hidden; text-overflow:ellipsis;">{{ m.email }}</span>
+                <span><span style="font-size:11px; font-weight:700; color:{{ m.planColor }}; background:{{ m.planBg }}; border-radius:6px; padding:2px 8px;">{{ m.plan }}</span></span>
+                <span style="color:#5b6178;">{{ m.projects }}개</span>
+                <span style="color:#5b6178;">{{ m.joined }}</span>
+                <span style="font-size:12px; color:{{ m.verifyColor }}; font-weight:700;">{{ m.verify }}</span>
+                <div style="display:flex; justify-content:flex-end;">
+                  <div onClick="{{ m.toggle }}" style="font-size:11.5px; font-weight:700; border-radius:999px; padding:4px 11px; cursor:pointer; border:1px solid; color:{{ m.sColor }}; background:{{ m.sBg }}; border-color:{{ m.sBorder }};">{{ m.status }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- 프로젝트 관리 -->
+      <sc-if value="{{ is.projects }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:14px;">
+            <sc-for list="{{ templateStats }}" as="t" hint-placeholder-count="3">
+              <div style="border:1.5px solid #c7d2fe; border-radius:16px; padding:16px 20px;">
+                <div style="font-size:12px; font-weight:700; color:#6b7280;">{{ t.label }}</div>
+                <div style="margin-top:6px; font-size:24px; font-weight:900;">{{ t.value }}<span style="font-size:12px; color:#9aa3b8; font-weight:400;"> 개</span></div>
+              </div>
+            </sc-for>
+          </div>
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; overflow:hidden;">
+            <div style="display:grid; grid-template-columns:1.6fr 0.9fr 0.9fr 0.7fr 1.4fr 0.8fr; gap:12px; padding:13px 20px; background:#f8faff; font-size:12px; font-weight:700; color:#6b7280; border-bottom:1px solid #e6ebfb;">
+              <span>프로젝트명</span><span>소유자</span><span>템플릿</span><span>팀원</span><span>기간</span><span style="text-align:right;">진행</span>
+            </div>
+            <sc-for list="{{ projects }}" as="p" hint-placeholder-count="6">
+              <div style="display:grid; grid-template-columns:1.6fr 0.9fr 0.9fr 0.7fr 1.4fr 0.8fr; gap:12px; padding:14px 20px; font-size:13px; align-items:center; border-bottom:1px solid #f1f3f9;">
+                <span style="font-weight:700;">{{ p.name }}</span>
+                <span style="color:#5b6178;">{{ p.owner }}</span>
+                <span><span style="font-size:11px; font-weight:700; color:#4f46e5; background:#eef2ff; border-radius:6px; padding:2px 8px;">{{ p.template }}</span></span>
+                <span style="color:#5b6178;">{{ p.members }}명</span>
+                <span style="color:#5b6178;">{{ p.period }}</span>
+                <div style="display:flex; align-items:center; gap:8px; justify-content:flex-end;">
+                  <div style="width:56px; height:6px; border-radius:999px; background:#e6ebfb; overflow:hidden;"><div style="height:100%; background:#4f46e5; width:{{ p.pct }};"></div></div>
+                  <span style="font-size:12px; color:#6b7280; width:32px; text-align:right;">{{ p.pct }}</span>
+                </div>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- 자소서 프롬프트 -->
+      <sc-if value="{{ is.prompt }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start;">
+
+          <section style="flex:1 1 220px; box-sizing:border-box; border:1.5px solid #c7d2fe; border-radius:18px; padding:18px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:14px; font-weight:900;">버전 기록</div>
+            <sc-for list="{{ versions }}" as="v" hint-placeholder-count="4">
+              <div onClick="{{ v.select }}" style="border:1.5px solid; border-color:{{ v.border }}; background:{{ v.bg }}; border-radius:12px; padding:11px 12px; cursor:pointer;">
+                <div style="display:flex; align-items:center; gap:6px;">
+                  <span style="font-size:13px; font-weight:700;">{{ v.name }}</span>
+                  <sc-if value="{{ v.live }}" hint-placeholder-val="{{ false }}">
+                    <span style="font-size:10px; font-weight:700; color:#ffffff; background:#4f46e5; border-radius:999px; padding:1px 7px;">배포중</span>
+                  </sc-if>
+                </div>
+                <div style="font-size:11.5px; color:#6b7280; margin-top:4px;">{{ v.meta }}</div>
+                <div style="font-size:11.5px; color:#9aa3b8; margin-top:2px;">{{ v.memo }}</div>
+              </div>
+            </sc-for>
+          </section>
+
+          <section style="flex:999 1 460px; min-width:0; box-sizing:border-box; border:1.5px solid #c7d2fe; border-radius:18px; padding:20px 22px; display:flex; flex-direction:column; gap:14px;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <div>
+                <div style="font-size:16px; font-weight:900; letter-spacing:-0.3px;">AI 성과 리포트 · 자소서 프롬프트</div>
+                <div style="font-size:12px; color:#6b7280; margin-top:4px;">/profile 의 AI 성과 리포트 생성 시 사용됩니다.</div>
+              </div>
+              <sc-if value="{{ dirty }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:11px; font-weight:700; color:#b45309; background:#fef3c7; border-radius:999px; padding:3px 10px;">저장 안 됨</span>
+              </sc-if>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:7px;">
+              <div style="font-size:12px; font-weight:700; color:#6b7280;">사용 가능한 변수 · 클릭하면 끝에 삽입</div>
+              <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                <sc-for list="{{ variables }}" as="v" hint-placeholder-count="7">
+                  <div onClick="{{ v.insert }}" style="font-size:11.5px; font-weight:700; font-family:ui-monospace, Menlo, monospace; color:#4f46e5; background:#eef2ff; border:1px solid #c7d2fe; border-radius:6px; padding:3px 8px; cursor:pointer;" style-hover="background:#e0e7ff;">{{ v.key }}</div>
+                </sc-for>
+              </div>
+            </div>
+
+            <textarea value="{{ promptText }}" onChange="{{ onPromptChange }}" spellcheck="false" style="width:100%; min-height:460px; box-sizing:border-box; border:1.5px solid #c7d2fe; border-radius:14px; padding:16px; font-family:ui-monospace, Menlo, monospace; font-size:12.5px; line-height:1.75; color:#1f2437; background:#f8faff; resize:vertical; outline:none;"></textarea>
+
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+              <div style="font-size:12px; color:#9aa3b8;">{{ charCount }}</div>
+              <div style="display:flex; gap:8px;">
+                <div onClick="{{ resetPrompt }}" style="border:1.5px solid #c7d2fe; border-radius:10px; padding:9px 14px; font-size:13px; color:#5b6178; cursor:pointer;" style-hover="background:#f8faff;">되돌리기</div>
+                <div onClick="{{ savePrompt }}" style="border:1.5px solid #4f46e5; border-radius:10px; padding:9px 14px; font-size:13px; font-weight:700; color:#4f46e5; cursor:pointer;" style-hover="background:#f2f5ff;">새 버전으로 저장</div>
+                <div onClick="{{ deployPrompt }}" style="background:#4f46e5; border:1.5px solid #4f46e5; border-radius:10px; padding:9px 16px; font-size:13px; font-weight:700; color:#ffffff; cursor:pointer;" style-hover="background:#4338ca;">배포</div>
+              </div>
+            </div>
+          </section>
+
+          <div style="flex:1 1 280px; display:flex; flex-direction:column; gap:18px;">
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:18px; display:flex; flex-direction:column; gap:12px;">
+              <div style="font-size:14px; font-weight:900;">모델 설정</div>
+              <div style="display:flex; flex-direction:column; gap:5px;">
+                <div style="font-size:12px; color:#6b7280;">모델</div>
+                <div style="display:flex; flex-direction:column; gap:5px;">
+                  <sc-for list="{{ models }}" as="m" hint-placeholder-count="3">
+                    <div onClick="{{ m.select }}" style="display:flex; align-items:center; gap:8px; border:1.5px solid; border-color:{{ m.border }}; background:{{ m.bg }}; border-radius:10px; padding:8px 10px; cursor:pointer; font-size:12.5px; font-family:ui-monospace, Menlo, monospace;">
+                      <span style="width:10px; height:10px; border-radius:50%; border:2px solid; border-color:{{ m.border }}; background:{{ m.dot }};"></span>{{ m.name }}
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <div style="display:flex; justify-content:space-between; font-size:12px; color:#6b7280;"><span>Temperature</span><span style="font-weight:700; color:#1f2437;">{{ tempLabel }}</span></div>
+                <input type="range" min="0" max="10" step="1" value="{{ temp }}" onChange="{{ onTemp }}" style="width:100%; accent-color:#4f46e5;" />
+              </div>
+              <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px;">
+                <span style="color:#6b7280;">응답 형식</span>
+                <span style="font-weight:700; font-family:ui-monospace, Menlo, monospace;">format: "json"</span>
+              </div>
+              <div style="display:flex; align-items:center; justify-content:space-between; font-size:12.5px;">
+                <span style="color:#6b7280;">실패 시 예시 데이터 대체</span>
+                <div onClick="{{ toggleFallback }}" style="width:38px; height:22px; border-radius:999px; position:relative; cursor:pointer; background:{{ fallbackBg }};">
+                  <div style="position:absolute; top:3px; width:16px; height:16px; border-radius:50%; background:#ffffff; left:{{ fallbackLeft }};"></div>
+                </div>
+              </div>
+            </section>
+
+            <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:18px; display:flex; flex-direction:column; gap:12px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-size:14px; font-weight:900;">테스트 실행</div>
+                <div onClick="{{ runTest }}" style="font-size:12px; font-weight:700; color:#ffffff; background:#4f46e5; border-radius:8px; padding:6px 11px; cursor:pointer;">{{ testBtn }}</div>
+              </div>
+              <div style="font-size:12px; color:#6b7280;">샘플: 박성빈 · UI 디자인 · 프로젝트 NODE</div>
+              <sc-if value="{{ testDone }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                  <div style="border:1.5px solid #c7d2fe; border-radius:12px; background:#f8faff; padding:12px; font-size:12.5px; line-height:1.7; color:#2b3149;">{{ testOutput }}</div>
+                  <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <span style="font-size:11px; color:#6b7280; background:#f1f3f9; border-radius:999px; padding:2px 9px;">응답 4.8초</span>
+                    <span style="font-size:11px; color:#6b7280; background:#f1f3f9; border-radius:999px; padding:2px 9px;">JSON 파싱 성공</span>
+                  </div>
+                </div>
+              </sc-if>
+            </section>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- AI 리포트 로그 -->
+      <sc-if value="{{ is.reports }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr)); gap:14px;">
+            <sc-for list="{{ reportStats }}" as="s" hint-placeholder-count="4">
+              <div style="border:1.5px solid #c7d2fe; border-radius:16px; padding:16px 20px;">
+                <div style="font-size:12px; font-weight:700; color:#6b7280;">{{ s.label }}</div>
+                <div style="margin-top:6px; font-size:24px; font-weight:900; color:{{ s.color }};">{{ s.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; overflow:hidden;">
+            <div style="display:grid; grid-template-columns:1fr 1.4fr 0.8fr 0.8fr 1fr 0.8fr; gap:12px; padding:13px 20px; background:#f8faff; font-size:12px; font-weight:700; color:#6b7280; border-bottom:1px solid #e6ebfb;">
+              <span>회원</span><span>프로젝트</span><span>프롬프트</span><span>소요</span><span>생성 일시</span><span style="text-align:right;">결과</span>
+            </div>
+            <sc-for list="{{ reports }}" as="r" hint-placeholder-count="7">
+              <div style="display:grid; grid-template-columns:1fr 1.4fr 0.8fr 0.8fr 1fr 0.8fr; gap:12px; padding:13px 20px; font-size:13px; align-items:center; border-bottom:1px solid #f1f3f9;">
+                <span style="font-weight:700;">{{ r.user }}</span>
+                <span style="color:#5b6178;">{{ r.project }}</span>
+                <span style="font-family:ui-monospace, Menlo, monospace; font-size:12px; color:#4f46e5;">{{ r.version }}</span>
+                <span style="color:#5b6178;">{{ r.time }}</span>
+                <span style="color:#5b6178;">{{ r.date }}</span>
+                <div style="display:flex; justify-content:flex-end;"><span style="font-size:11px; font-weight:700; border-radius:999px; padding:3px 9px; border:1px solid; color:{{ r.sColor }}; background:{{ r.sBg }}; border-color:{{ r.sBorder }};">{{ r.status }}</span></div>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- 결제 내역 -->
+      <sc-if value="{{ is.payments }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr)); gap:14px;">
+            <sc-for list="{{ payStats }}" as="s" hint-placeholder-count="4">
+              <div style="border:1.5px solid #c7d2fe; border-radius:16px; padding:16px 20px;">
+                <div style="font-size:12px; font-weight:700; color:#6b7280;">{{ s.label }}</div>
+                <div style="margin-top:6px; font-size:24px; font-weight:900; color:{{ s.color }};">{{ s.value }}</div>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <sc-for list="{{ payFilters }}" as="f" hint-placeholder-count="4">
+              <div onClick="{{ f.select }}" style="padding:7px 15px; border-radius:999px; font-size:13px; font-weight:700; cursor:pointer; border:1px solid; border-color:{{ f.border }}; background:{{ f.bg }}; color:{{ f.color }};">{{ f.label }}</div>
+            </sc-for>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start;">
+            <section style="flex:999 1 600px; min-width:0; border:1.5px solid #c7d2fe; border-radius:18px; overflow-x:auto;">
+              <div style="min-width:600px; display:grid; grid-template-columns:1.1fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr; gap:12px; padding:13px 20px; background:#f8faff; font-size:12px; font-weight:700; color:#6b7280; border-bottom:1px solid #e6ebfb;">
+                <span>주문번호</span><span>회원</span><span>플랜</span><span>금액</span><span>결제 일시</span><span style="text-align:right;">상태</span>
+              </div>
+              <sc-for list="{{ payments }}" as="p" hint-placeholder-count="8">
+                <div onClick="{{ p.select }}" style="min-width:600px; white-space:nowrap; display:grid; grid-template-columns:1.1fr 0.9fr 0.9fr 0.9fr 1.1fr 0.8fr; gap:12px; padding:13px 20px; font-size:13px; align-items:center; border-bottom:1px solid #f1f3f9; cursor:pointer; background:{{ p.rowBg }};">
+                  <span style="font-family:ui-monospace, Menlo, monospace; font-size:12px; color:#5b6178;">{{ p.id }}</span>
+                  <span style="font-weight:700;">{{ p.user }}</span>
+                  <span style="color:#5b6178;">{{ p.plan }}</span>
+                  <span style="font-weight:700;">{{ p.amount }}</span>
+                  <span style="color:#5b6178;">{{ p.date }}</span>
+                  <div style="display:flex; justify-content:flex-end;"><span style="font-size:11px; font-weight:700; border-radius:999px; padding:3px 9px; border:1px solid; color:{{ p.sColor }}; background:{{ p.sBg }}; border-color:{{ p.sBorder }};">{{ p.status }}</span></div>
+                </div>
+              </sc-for>
+            </section>
+
+            <section style="flex:1 1 300px; box-sizing:border-box; border:1.5px solid #c7d2fe; border-radius:18px; padding:20px; display:flex; flex-direction:column; gap:14px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <div style="font-size:15px; font-weight:900;">결제 상세</div>
+                <span style="font-size:11px; font-weight:700; border-radius:999px; padding:3px 9px; border:1px solid; color:{{ pay.sColor }}; background:{{ pay.sBg }}; border-color:{{ pay.sBorder }};">{{ pay.status }}</span>
+              </div>
+              <div style="border:1.5px solid #4f46e5; background:#f2f5ff; border-radius:14px; padding:14px 16px;">
+                <div style="font-size:11.5px; font-weight:700; color:#4f46e5;">{{ pay.plan }}</div>
+                <div style="font-size:24px; font-weight:900; margin-top:4px;">{{ pay.amount }}<span style="font-size:12px; font-weight:400; color:#6b7280;"> / 월</span></div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:9px;">
+                <sc-for list="{{ pay.rows }}" as="r" hint-placeholder-count="6">
+                  <div style="display:flex; justify-content:space-between; gap:10px; font-size:12.5px;">
+                    <span style="color:#6b7280;">{{ r.k }}</span>
+                    <span style="font-weight:500; text-align:right;">{{ r.v }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <div style="flex:1; text-align:center; border:1.5px solid #c7d2fe; border-radius:10px; padding:9px; font-size:12.5px; color:#5b6178; cursor:pointer;" style-hover="background:#f8faff;">영수증</div>
+                <div onClick="{{ refund }}" style="flex:1; text-align:center; border:1.5px solid; border-radius:10px; padding:9px; font-size:12.5px; font-weight:700; cursor:pointer; color:{{ pay.refundColor }}; border-color:{{ pay.refundBorder }};">{{ pay.refundLabel }}</div>
+              </div>
+              <div style="font-size:11px; color:#9aa3b8; text-align:center;">현재 결제는 PG 미연동 테스트 데이터입니다.</div>
+            </section>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 플랜 관리 -->
+      <sc-if value="{{ is.plans }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:18px; align-items:start;">
+          <sc-for list="{{ plans }}" as="p" hint-placeholder-count="3">
+            <section style="border:1.5px solid; border-color:{{ p.border }}; background:{{ p.bg }}; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:14px;">
+              <div style="display:flex; align-items:center; justify-content:space-between;">
+                <span style="font-size:11px; font-weight:700; color:#4f46e5; background:#ffffff; border:1px solid #c7d2fe; border-radius:999px; padding:2px 9px;">{{ p.key }}</span>
+                <span style="font-size:12px; color:#6b7280;">구독 {{ p.subs }}명</span>
+              </div>
+              <div>
+                <div style="font-size:16px; font-weight:900;">{{ p.name }}</div>
+                <div style="font-size:26px; font-weight:900; margin-top:4px;">{{ p.price }}<span style="font-size:13px; font-weight:400; color:#6b7280;"> {{ p.priceLabel }}</span></div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div style="border:1px solid #c7d2fe; border-radius:10px; padding:9px 11px; background:#ffffff;">
+                  <div style="font-size:11px; color:#6b7280;">프로젝트 한도</div>
+                  <div style="font-size:14px; font-weight:700; margin-top:2px;">{{ p.projectLimit }}</div>
+                </div>
+                <div style="border:1px solid #c7d2fe; border-radius:10px; padding:9px 11px; background:#ffffff;">
+                  <div style="font-size:11px; color:#6b7280;">팀원 한도</div>
+                  <div style="font-size:14px; font-weight:700; margin-top:2px;">{{ p.memberLimit }}</div>
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:7px;">
+                <sc-for list="{{ p.features }}" as="f" hint-placeholder-count="4">
+                  <div style="display:flex; align-items:center; gap:8px; font-size:13px;"><span style="color:#4f46e5; font-weight:700;">✓</span>{{ f }}</div>
+                </sc-for>
+              </div>
+              <div style="display:flex; gap:8px; margin-top:4px;">
+                <div style="flex:1; text-align:center; border:1.5px solid #4f46e5; border-radius:10px; padding:9px; font-size:12.5px; font-weight:700; color:#4f46e5; background:#ffffff; cursor:pointer;">수정</div>
+                <div style="flex:1; text-align:center; border:1.5px solid #c7d2fe; border-radius:10px; padding:9px; font-size:12.5px; color:#5b6178; background:#ffffff; cursor:pointer;">판매 중지</div>
+              </div>
+            </section>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <!-- 공지 / 알림 -->
+      <sc-if value="{{ is.notices }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; align-items:start;">
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:14px;">
+            <div style="font-size:16px; font-weight:900;">새 공지 작성</div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <div style="font-size:12px; font-weight:700; color:#6b7280;">대상</div>
+              <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <sc-for list="{{ targets }}" as="t" hint-placeholder-count="4">
+                  <div onClick="{{ t.select }}" style="padding:6px 13px; border-radius:999px; font-size:12.5px; font-weight:700; cursor:pointer; border:1px solid; border-color:{{ t.border }}; background:{{ t.bg }}; color:{{ t.color }};">{{ t.label }}</div>
+                </sc-for>
+              </div>
+            </div>
+            <input value="{{ noticeTitle }}" onChange="{{ onNoticeTitle }}" placeholder="제목" style="border:1.5px solid #c7d2fe; border-radius:10px; padding:11px 14px; font-size:13.5px; outline:none;" />
+            <textarea value="{{ noticeBody }}" onChange="{{ onNoticeBody }}" placeholder="내용을 입력하세요" style="border:1.5px solid #c7d2fe; border-radius:10px; padding:12px 14px; font-size:13.5px; min-height:160px; resize:vertical; outline:none; line-height:1.6;"></textarea>
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="font-size:12px; color:#6b7280;">알림센터 + 카카오 알림 동의자에게 발송</div>
+              <div onClick="{{ publishNotice }}" style="background:#4f46e5; border-radius:10px; padding:9px 18px; font-size:13px; font-weight:700; color:#ffffff; cursor:pointer;">발송</div>
+            </div>
+          </section>
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:16px; font-weight:900;">발송 기록</div>
+            <sc-for list="{{ notices }}" as="n" hint-placeholder-count="4">
+              <div style="border:1.5px solid #e6ebfb; border-radius:12px; padding:12px 14px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span style="font-size:10.5px; font-weight:700; color:#4f46e5; background:#eef2ff; border-radius:6px; padding:2px 7px;">{{ n.target }}</span>
+                  <span style="font-size:13.5px; font-weight:700; flex:1;">{{ n.title }}</span>
+                </div>
+                <div style="font-size:12px; color:#6b7280; margin-top:5px;">{{ n.meta }}</div>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+      <!-- 관리자 설정 -->
+      <sc-if value="{{ is.settings }}" hint-placeholder-val="{{ false }}">
+        <div style="display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:18px; align-items:start;">
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:12px;">
+            <div style="display:flex; align-items:center; justify-content:space-between;">
+              <div style="font-size:16px; font-weight:900;">관리자 계정</div>
+              <div style="font-size:12.5px; font-weight:700; color:#4f46e5; cursor:pointer;">+ 관리자 초대</div>
+            </div>
+            <sc-for list="{{ admins }}" as="a" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:12px; border:1.5px solid #e6ebfb; border-radius:12px; padding:12px 14px;">
+                <span style="width:32px; height:32px; border-radius:50%; background:#1f2437; color:#ffffff; font-size:13px; font-weight:700; display:flex; align-items:center; justify-content:center;">{{ a.initial }}</span>
+                <div style="flex:1;">
+                  <div style="font-size:13.5px; font-weight:700;">{{ a.name }}</div>
+                  <div style="font-size:12px; color:#6b7280;">{{ a.email }}</div>
+                </div>
+                <span style="font-size:11px; font-weight:700; color:#4f46e5; background:#eef2ff; border-radius:6px; padding:3px 9px;">{{ a.role }}</span>
+              </div>
+            </sc-for>
+          </section>
+          <section style="border:1.5px solid #c7d2fe; border-radius:18px; padding:22px; display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size:16px; font-weight:900;">활동 로그</div>
+            <sc-for list="{{ auditLog }}" as="l" hint-placeholder-count="6">
+              <div style="display:flex; gap:10px; font-size:12.5px; padding:6px 0; border-bottom:1px solid #f1f3f9;">
+                <span style="color:#9aa3b8; width:86px; flex:0 0 86px;">{{ l.time }}</span>
+                <span style="font-weight:700; width:52px; flex:0 0 52px;">{{ l.who }}</span>
+                <span style="color:#5b6178;">{{ l.what }}</span>
+              </div>
+            </sc-for>
+          </section>
+        </div>
+      </sc-if>
+
+    </div>
+  </main>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:1000}}">
+const DEFAULT_PROMPT = `당신은 취업 컨설턴트입니다. 대학생의 팀 프로젝트 기록을 분석해 자기소개서에 바로 쓸 수 있는 문장을 작성합니다.
+
+=== 사용자 정보 ===
+- 이름: {{nickname}}
+- 담당 파트: {{role}}
+- 프로젝트: {{project_name}} ({{period}})
+
+=== 프로젝트 기록 ===
+[완료한 할 일]
+{{done_todos}}
+
+[회의록·산출물 요약]
+{{documents}}
+
+[기여도] {{contribution}}%
+
+=== 작성 규칙 (반드시 지킬 것) ===
+1. 기록에 없는 사실을 지어내지 말 것
+2. 성과 항목은 3개로 작성
+   - 1번: 설계·구현 역량 (무엇을 어떻게 만들었는가)
+   - 2번: 협업·커뮤니케이션 역량 (팀에 어떤 기여를 했는가)
+   - 3번: 문제해결·주도성 (스스로 발견하고 개선한 것)
+3. 자소서 문장은 3문장 구성
+   - 1문장: 어떤 상황에서 무엇을 맡았는지 (프로젝트명, 기간, 역할 명시)
+   - 2문장: 어떤 문제를 발견하고 어떻게 해결했는지 (구체적 행동)
+   - 3문장: 그 결과 무엇이 달라졌는지 (수치 또는 변화)
+4. 문체는 "~했습니다" 체로 통일
+
+=== 출력 형식 ===
+아래 JSON만 출력하세요. 설명, 인사말, 마크다운 코드블록 금지.
+{"summary": "...", "achievements": ["...", "...", "..."], "coverLetter": "...", "tags": ["...", "..."]}`;
+
+const STATUS = {
+  ok:    { color:"#4f46e5", bg:"#eef2ff", border:"#c7d2fe" },
+  gray:  { color:"#6b7280", bg:"#f1f3f9", border:"#e6ebfb" },
+  red:   { color:"#e5484d", bg:"#ffffff", border:"#e5484d" },
+  amber: { color:"#b45309", bg:"#fef3c7", border:"#fde68a" }
+};
+const PAY_STATUS = { "완료":STATUS.ok, "환불":STATUS.gray, "실패":STATUS.red };
+const PLAN_STYLE = {
+  "기본":     { color:"#6b7280", bg:"#f1f3f9" },
+  "프리미엄": { color:"#4f46e5", bg:"#eef2ff" },
+  "프로":     { color:"#ffffff", bg:"#4f46e5" }
+};
+
+class Component extends DCLogic {
+  state = {
+    tab: "dashboard",
+    memberFilter: "전체",
+    suspended: { "정민재": true },
+    payFilter: "전체",
+    paySel: "ND-260131",
+    refunded: {},
+    promptText: DEFAULT_PROMPT,
+    savedText: DEFAULT_PROMPT,
+    versionSel: "v4",
+    liveVersion: "v4",
+    extraVersions: [],
+    model: "qwen2.5:7b",
+    temp: 3,
+    fallback: true,
+    testState: "idle",
+    target: "전체 회원",
+    noticeTitle: "",
+    noticeBody: "",
+    sentNotices: []
+  };
+
+  members() {
+    return [
+      { name:"박성빈", email:"sungbin@node.kr", plan:"프로", projects:6, joined:"2026/03/02", verified:true },
+      { name:"박기완", email:"kiwan.park@gmail.com", plan:"프리미엄", projects:4, joined:"2026/03/05", verified:true },
+      { name:"한주현", email:"juhyun.h@naver.com", plan:"프리미엄", projects:3, joined:"2026/04/11", verified:true },
+      { name:"권소희", email:"sohee.k@gmail.com", plan:"기본", projects:2, joined:"2026/05/20", verified:true },
+      { name:"박서연", email:"seoyeon@korea.ac.kr", plan:"기본", projects:5, joined:"2026/06/01", verified:false },
+      { name:"정민재", email:"minjae.j@gmail.com", plan:"기본", projects:1, joined:"2026/08/14", verified:true },
+      { name:"이도윤", email:"doyun.lee@yonsei.ac.kr", plan:"프리미엄", projects:3, joined:"2026/09/22", verified:true },
+      { name:"최하린", email:"harin.c@gmail.com", plan:"기본", projects:0, joined:"2026/10/29", verified:false }
+    ];
+  }
+
+  payments() {
+    return [
+      { id:"ND-260131", user:"이도윤", plan:"프리미엄", amount:9900, date:"2026/10/31 14:22", status:"완료", method:"신용카드 (현대 ****4821)", holder:"이도윤" },
+      { id:"ND-260130", user:"박성빈", plan:"프로", amount:19900, date:"2026/10/30 09:10", status:"완료", method:"신용카드 (신한 ****1104)", holder:"박성빈" },
+      { id:"ND-260129", user:"최하린", plan:"프리미엄", amount:9900, date:"2026/10/29 21:47", status:"실패", method:"신용카드 (국민 ****0093)", holder:"최하린" },
+      { id:"ND-260128", user:"한주현", plan:"프리미엄", amount:9900, date:"2026/10/28 18:03", status:"완료", method:"신용카드 (삼성 ****7712)", holder:"한주현" },
+      { id:"ND-260127", user:"박기완", plan:"프리미엄", amount:9900, date:"2026/10/27 11:30", status:"완료", method:"신용카드 (우리 ****3390)", holder:"박기완" },
+      { id:"ND-260126", user:"정민재", plan:"프로", amount:19900, date:"2026/10/25 16:55", status:"환불", method:"신용카드 (하나 ****5567)", holder:"정민재" },
+      { id:"ND-260125", user:"박서연", plan:"프리미엄", amount:9900, date:"2026/10/22 08:41", status:"완료", method:"신용카드 (농협 ****2208)", holder:"박서연" },
+      { id:"ND-260124", user:"권소희", plan:"프리미엄", amount:9900, date:"2026/10/19 13:15", status:"실패", method:"신용카드 (BC ****6634)", holder:"권소희" }
+    ];
+  }
+
+  versionList() {
+    const base = [
+      { id:"v4", meta:"2026/10/28 · 박성빈", memo:"자소서 3문장 구조 규칙 추가" },
+      { id:"v3", meta:"2026/10/12 · 박기완", memo:"JSON 출력 형식 고정" },
+      { id:"v2", meta:"2026/09/30 · 박성빈", memo:"성과 항목 3개로 분리" },
+      { id:"v1", meta:"2026/09/18 · 박성빈", memo:"최초 작성" }
+    ];
+    return this.state.extraVersions.concat(base);
+  }
+
+  won(n) { return "₩" + n.toLocaleString("ko-KR"); }
+
+  renderVals() {
+    const s = this.state;
+    const set = (o) => this.setState(o);
+    const navDefs = [
+      { id:"dashboard", icon:"▦", label:"대시보드" },
+      { id:"members", icon:"◉", label:"회원 관리" },
+      { id:"projects", icon:"▤", label:"프로젝트 관리" },
+      { id:"prompt", icon:"✎", label:"자소서 프롬프트" },
+      { id:"reports", icon:"◈", label:"AI 리포트 로그", badge:"3" },
+      { id:"payments", icon:"₩", label:"결제 내역", badge:"2" },
+      { id:"plans", icon:"◇", label:"플랜 관리" },
+      { id:"notices", icon:"✉", label:"공지 · 알림" },
+      { id:"settings", icon:"⚙", label:"관리자 설정" }
+    ];
+    const is = {}; navDefs.forEach(n => { is[n.id] = s.tab === n.id; });
+    const current = navDefs.find(n => n.id === s.tab);
+    const pill = (active) => ({
+      bg: active ? "#4f46e5" : "#ffffff",
+      color: active ? "#ffffff" : "#5b6178",
+      border: active ? "#4f46e5" : "#c7d2fe"
+    });
+
+    // dashboard
+    const days = [182,214,166,240,298,255,190,228,310,286,342,268,305,376];
+    const maxD = Math.max.apply(null, days);
+    const chart = days.map((v, i) => ({
+      v: String(v), d: String(18 + i > 31 ? 18 + i - 31 : 18 + i),
+      h: Math.round(v / maxD * 130) + "px",
+      color: i === days.length - 1 ? "#4f46e5" : "#c7d2fe"
+    }));
+
+    const allPays = this.payments().map(p => ({ ...p, status: s.refunded[p.id] ? "환불" : p.status }));
+    const payTag = (st) => { const c = PAY_STATUS[st]; return { sColor:c.color, sBg:c.bg, sBorder:c.border }; };
+
+    // members
+    const mem = this.members();
+    const memFiltered = s.memberFilter === "전체" ? mem : mem.filter(m => m.plan === s.memberFilter);
+
+    // payments
+    const payFiltered = s.payFilter === "전체" ? allPays : allPays.filter(p => p.status === s.payFilter);
+    const sel = allPays.find(p => p.id === s.paySel) || allPays[0];
+    const done = allPays.filter(p => p.status === "완료");
+
+    // prompt
+    const versions = this.versionList();
+    const vars = ["{{nickname}}","{{role}}","{{project_name}}","{{period}}","{{done_todos}}","{{documents}}","{{contribution}}"];
+
+    return {
+      nav: navDefs.map(n => {
+        const a = s.tab === n.id;
+        return { ...n, badge: n.badge || false, select: () => set({ tab:n.id }),
+          bg: a ? "#ffffff" : "transparent", border: a ? "#c7d2fe" : "transparent",
+          color: a ? "#4f46e5" : "#2b3149", weight: a ? 700 : 500 };
+      }),
+      is, current,
+
+      kpis: [
+        { label:"전체 회원", value:"1,284", unit:"명", delta:"+38 이번 주", deltaColor:"#4f46e5" },
+        { label:"활성 프로젝트", value:"412", unit:"개", delta:"+12 이번 주", deltaColor:"#4f46e5" },
+        { label:"10월 매출", value:"₩3.84M", unit:"", delta:"+18% 전월 대비", deltaColor:"#4f46e5" },
+        { label:"AI 리포트 생성", value:"927", unit:"건", delta:"실패율 4.1%", deltaColor:"#e5484d" }
+      ],
+      chart,
+      planDist: [
+        { name:"기본 플랜", count:"958", pct:"75%", color:"#c7d2fe" },
+        { name:"프리미엄 플랜", count:"271", pct:"21%", color:"#818cf8" },
+        { name:"프로 플랜", count:"55", pct:"4%", color:"#4f46e5" }
+      ],
+      systems: [
+        { name:"Supabase Auth / DB", status:"정상", dot:"#22c55e", color:"#1f2437" },
+        { name:"Ollama (qwen2.5:7b)", status:"응답 지연", dot:"#f59e0b", color:"#b45309" },
+        { name:"휴대폰 인증 (Vonage)", status:"정상", dot:"#22c55e", color:"#1f2437" },
+        { name:"결제 PG", status:"미연동", dot:"#9aa3b8", color:"#6b7280" }
+      ],
+      recentPayments: allPays.slice(0, 5).map(p => ({ user:p.user, plan:p.plan, date:p.date, amount:this.won(p.amount), status:p.status, ...payTag(p.status) })),
+      goPayments: () => set({ tab:"payments" }),
+      todoCount: "4",
+      adminTodos: [
+        { tag:"결제", text:"결제 실패 2건 확인 필요", tagColor:"#e5484d", tagBg:"#fdecec", go: () => set({ tab:"payments", payFilter:"실패" }) },
+        { tag:"AI", text:"AI 리포트 JSON 파싱 실패 3건", tagColor:"#b45309", tagBg:"#fef3c7", go: () => set({ tab:"reports" }) },
+        { tag:"회원", text:"휴대폰 인증 미완료 회원 2명", tagColor:"#4f46e5", tagBg:"#eef2ff", go: () => set({ tab:"members" }) },
+        { tag:"프롬프트", text:"v4 프롬프트 배포 후 성공률 확인", tagColor:"#4f46e5", tagBg:"#eef2ff", go: () => set({ tab:"prompt" }) }
+      ],
+
+      memberFilters: ["전체","기본","프리미엄","프로"].map(l => ({ label:l, ...pill(s.memberFilter === l), select: () => set({ memberFilter:l }) })),
+      memberCount: memFiltered.length + "명 표시 · 전체 1,284명",
+      members: memFiltered.map(m => {
+        const sus = !!s.suspended[m.name];
+        const st = sus ? STATUS.red : STATUS.ok;
+        const ps = PLAN_STYLE[m.plan];
+        return { ...m, initial:m.name[0], planColor:ps.color, planBg:ps.bg,
+          verify: m.verified ? "완료" : "미완료", verifyColor: m.verified ? "#4f46e5" : "#e5484d",
+          status: sus ? "정지됨" : "활성", sColor:st.color, sBg:st.bg, sBorder:st.border,
+          toggle: () => set({ suspended: { ...s.suspended, [m.name]: !sus } }) };
+      }),
+
+      templateStats: [
+        { label:"대학 팀플 템플릿", value:"238" },
+        { label:"공모전 템플릿", value:"121" },
+        { label:"연구 템플릿", value:"53" }
+      ],
+      projects: [
+        { name:"프로젝트 NODE", owner:"박성빈", template:"대학 팀플", members:5, period:"2026/06/04 – 2026/12/23", pct:"62%" },
+        { name:"캡스톤 디자인 A조", owner:"이도윤", template:"대학 팀플", members:4, period:"2026/09/01 – 2026/12/15", pct:"41%" },
+        { name:"K-스타트업 공모전", owner:"박기완", template:"공모전", members:3, period:"2026/08/10 – 2026/11/20", pct:"78%" },
+        { name:"HCI 사용성 연구", owner:"한주현", template:"연구", members:2, period:"2026/07/01 – 2027/01/31", pct:"35%" },
+        { name:"마케팅원론 조별과제", owner:"박서연", template:"대학 팀플", members:6, period:"2026/10/05 – 2026/11/30", pct:"18%" },
+        { name:"교내 해커톤", owner:"권소희", template:"공모전", members:4, period:"2026/10/20 – 2026/11/03", pct:"90%" }
+      ],
+
+      versions: versions.map(v => {
+        const a = s.versionSel === v.id;
+        return { name:v.id, meta:v.meta, memo:v.memo, live: s.liveVersion === v.id,
+          bg: a ? "#f2f5ff" : "#ffffff", border: a ? "#4f46e5" : "#e6ebfb",
+          select: () => set({ versionSel:v.id }) };
+      }),
+      variables: vars.map(k => ({ key:k, insert: () => set({ promptText: s.promptText + k }) })),
+      promptText: s.promptText,
+      onPromptChange: (e) => set({ promptText: e.target.value }),
+      dirty: s.promptText !== s.savedText,
+      charCount: s.promptText.length.toLocaleString("ko-KR") + "자 · 약 " + Math.round(s.promptText.length / 1.6).toLocaleString("ko-KR") + " 토큰",
+      resetPrompt: () => set({ promptText: s.savedText }),
+      savePrompt: () => {
+        const n = "v" + (versions.length + 1);
+        set({ savedText: s.promptText, versionSel: n,
+          extraVersions: [{ id:n, meta:"2026/11/01 · 박성빈", memo:"관리자 페이지에서 수정" }].concat(s.extraVersions) });
+      },
+      deployPrompt: () => set({ liveVersion: s.versionSel, savedText: s.promptText }),
+      models: ["qwen2.5:7b","llama3.1:8b","gemma2:9b"].map(m => {
+        const a = s.model === m;
+        return { name:m, select: () => set({ model:m }), border: a ? "#4f46e5" : "#e6ebfb", bg: a ? "#f2f5ff" : "#ffffff", dot: a ? "#4f46e5" : "#ffffff" };
+      }),
+      temp: s.temp,
+      tempLabel: (s.temp / 10).toFixed(1),
+      onTemp: (e) => set({ temp: Number(e.target.value) }),
+      fallbackBg: s.fallback ? "#4f46e5" : "#c7d2fe",
+      fallbackLeft: s.fallback ? "19px" : "3px",
+      toggleFallback: () => set({ fallback: !s.fallback }),
+      testBtn: s.testState === "running" ? "실행 중..." : "실행",
+      runTest: () => { set({ testState:"running" }); setTimeout(() => this.setState({ testState:"done" }), 900); },
+      testDone: s.testState === "done",
+      testOutput: "프로젝트 NODE(2026.06–12)에서 UI 디자인을 맡아 메인페이지와 투표·미니게임 화면을 설계했습니다. 화면마다 달랐던 색상과 카드 규칙을 하나의 테마로 정리해 팀원들이 같은 기준으로 화면을 만들 수 있도록 했습니다. 그 결과 신규 화면 제작 시 디자인 수정 요청이 눈에 띄게 줄었습니다.",
+
+      reportStats: [
+        { label:"이번 달 생성", value:"214건", color:"#1f2437" },
+        { label:"성공률", value:"95.9%", color:"#4f46e5" },
+        { label:"예시 데이터 대체", value:"9건", color:"#b45309" },
+        { label:"평균 응답", value:"5.2초", color:"#1f2437" }
+      ],
+      reports: [
+        { user:"박성빈", project:"프로젝트 NODE", version:"v4", time:"4.8초", date:"2026/10/31 15:02", st:"성공" },
+        { user:"이도윤", project:"캡스톤 디자인 A조", version:"v4", time:"6.1초", date:"2026/10/31 11:47", st:"성공" },
+        { user:"박서연", project:"마케팅원론 조별과제", version:"v4", time:"30.0초", date:"2026/10/30 22:15", st:"시간 초과" },
+        { user:"한주현", project:"HCI 사용성 연구", version:"v4", time:"5.4초", date:"2026/10/30 17:30", st:"성공" },
+        { user:"권소희", project:"교내 해커톤", version:"v3", time:"7.9초", date:"2026/10/27 20:08", st:"파싱 실패" },
+        { user:"박기완", project:"K-스타트업 공모전", version:"v3", time:"4.2초", date:"2026/10/26 13:44", st:"성공" },
+        { user:"정민재", project:"교내 해커톤", version:"v3", time:"8.3초", date:"2026/10/25 09:21", st:"파싱 실패" }
+      ].map(r => { const c = r.st === "성공" ? STATUS.ok : (r.st === "시간 초과" ? STATUS.amber : STATUS.red);
+        return { ...r, status:r.st, sColor:c.color, sBg:c.bg, sBorder:c.border }; }),
+
+      payStats: [
+        { label:"10월 매출", value:this.won(done.reduce((a,p)=>a+p.amount,0) * 47), color:"#1f2437" },
+        { label:"결제 완료", value:allPays.filter(p=>p.status==="완료").length + "건", color:"#4f46e5" },
+        { label:"환불", value:allPays.filter(p=>p.status==="환불").length + "건", color:"#6b7280" },
+        { label:"결제 실패", value:allPays.filter(p=>p.status==="실패").length + "건", color:"#e5484d" }
+      ],
+      payFilters: ["전체","완료","환불","실패"].map(l => ({ label:l, ...pill(s.payFilter === l), select: () => set({ payFilter:l }) })),
+      payments: payFiltered.map(p => ({ ...p, amount:this.won(p.amount), ...payTag(p.status),
+        rowBg: p.id === sel.id ? "#f2f5ff" : "#ffffff", select: () => set({ paySel:p.id }) })),
+      pay: {
+        plan: sel.plan + " 플랜", amount: this.won(sel.amount), status: sel.status, ...payTag(sel.status),
+        rows: [
+          { k:"주문번호", v:sel.id }, { k:"회원", v:sel.user }, { k:"결제 수단", v:sel.method },
+          { k:"카드 소유자", v:sel.holder }, { k:"결제 일시", v:sel.date },
+          { k:"다음 결제일", v: sel.status === "완료" ? "2026/11/" + sel.date.slice(8,10) : "-" }
+        ],
+        refundLabel: sel.status === "완료" ? "환불 처리" : (sel.status === "환불" ? "환불 완료" : "재결제 요청"),
+        refundColor: sel.status === "완료" ? "#e5484d" : "#9aa3b8",
+        refundBorder: sel.status === "완료" ? "#e5484d" : "#e6ebfb"
+      },
+      refund: () => { if (sel.status === "완료") set({ refunded: { ...s.refunded, [sel.id]: true } }); },
+
+      plans: [
+        { key:"basic", name:"기본 플랜", price:"무료", priceLabel:"", subs:"958", projectLimit:"8개", memberLimit:"5명",
+          features:["프로젝트 최대 8개 생성","팀원 최대 5명 초대","기본 통계 제공"], bg:"#ffffff", border:"#c7d2fe" },
+        { key:"premium", name:"프리미엄 플랜", price:"₩9,900", priceLabel:"/ 월", subs:"271", projectLimit:"무제한", memberLimit:"무제한",
+          features:["프로젝트 무제한 생성","팀원 무제한 초대","고급 통계 및 리포트","우선 고객 지원"], bg:"#f8faff", border:"#4f46e5" },
+        { key:"pro", name:"프로 플랜", price:"₩19,900", priceLabel:"/ 월", subs:"55", projectLimit:"무제한", memberLimit:"무제한",
+          features:["프리미엄 기능 모두 포함","전담 매니저 배정","API 연동 지원","맞춤형 보안 설정"], bg:"#ffffff", border:"#c7d2fe" }
+      ],
+
+      targets: ["전체 회원","기본 플랜","유료 플랜","인증 미완료"].map(l => ({ label:l, ...pill(s.target === l), select: () => set({ target:l }) })),
+      noticeTitle: s.noticeTitle,
+      noticeBody: s.noticeBody,
+      onNoticeTitle: (e) => set({ noticeTitle:e.target.value }),
+      onNoticeBody: (e) => set({ noticeBody:e.target.value }),
+      publishNotice: () => { if (!s.noticeTitle.trim()) return;
+        set({ sentNotices: [{ target:s.target, title:s.noticeTitle, meta:"2026/11/01 · 방금 발송" }].concat(s.sentNotices), noticeTitle:"", noticeBody:"" }); },
+      notices: s.sentNotices.concat([
+        { target:"전체 회원", title:"11월 정기 점검 안내 (11/5 02:00–04:00)", meta:"2026/10/29 · 1,284명 발송 · 열람 61%" },
+        { target:"유료 플랜", title:"AI 성과 리포트 개선 안내", meta:"2026/10/28 · 326명 발송 · 열람 74%" },
+        { target:"인증 미완료", title:"휴대폰 인증을 완료해주세요", meta:"2026/10/20 · 87명 발송 · 열람 38%" }
+      ]),
+
+      admins: [
+        { initial:"박", name:"박성빈", email:"sungbin@node.kr", role:"최고 관리자" },
+        { initial:"박", name:"박기완", email:"kiwan.park@gmail.com", role:"운영" },
+        { initial:"한", name:"한주현", email:"juhyun.h@naver.com", role:"CS" }
+      ],
+      auditLog: [
+        { time:"11/01 10:12", who:"박성빈", what:"자소서 프롬프트 v4 배포" },
+        { time:"10/31 18:40", who:"박기완", what:"ND-260126 환불 처리" },
+        { time:"10/31 09:05", who:"한주현", what:"정민재 회원 이용 정지" },
+        { time:"10/29 14:22", who:"박성빈", what:"11월 정기 점검 공지 발송" },
+        { time:"10/28 16:10", who:"박성빈", what:"프롬프트 v4 저장" },
+        { time:"10/27 11:00", who:"박기완", what:"프리미엄 플랜 기능 목록 수정" }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

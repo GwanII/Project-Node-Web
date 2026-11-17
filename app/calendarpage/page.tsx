@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation'; 
 import { 
-  ChevronLeft, ChevronRight, Lock, User, X, Plus, Check, GripVertical, Calendar as CalendarIcon, Edit3
+  ChevronLeft, ChevronRight, Unlock, Lock, User, X, Plus, Check, GripVertical, Calendar as CalendarIcon, Edit3
 } from 'lucide-react';
 import { supabase } from "@/src/lib/supabase";
 import Sidebar from './manubar';
@@ -80,6 +80,7 @@ export default function CustomNotionCalendar() {
   const [memoContent, setMemoContent] = useState<string>('');
 
   const [isLocked, setIsLocked] = useState(false);
+  
   // 현재 보고 있는 달에서 오늘이 속한 달로 이동
   const goToToday = () => {
     const today = new Date();
@@ -213,13 +214,14 @@ export default function CustomNotionCalendar() {
       }
 
       if (data) {
-        const mappedEvents: CalendarEvent[] = data.map((evt) => ({
+        const mappedEvents: CalendarEvent[] = data.map((evt, index) => ({
           id: evt.id,
           title: evt.title,
           startDate: evt.start_date,
           endDate: evt.end_date,
           color: evt.color,
-          sortOrder: evt.sort_order // 인터페이스에 맞게 매핑
+          // 기존 데이터에 sort_order가 없는 경우 조회 순서를 보존합니다.
+          sortOrder: evt.sort_order ?? index
         }));
         setEvents(mappedEvents);
       }
@@ -314,26 +316,47 @@ export default function CustomNotionCalendar() {
   };
 
   const handleDrop = async (targetId: string) => {
-    if (draggedItemId !== null) {
-      const updatedEvents = reorderById(events, draggedItemId, targetId);
-      setEvents(updatedEvents);
-
-      try {
-        const updatePromises = updatedEvents.map((evt, index) => 
-          supabase
-            .from('cal_events')
-            .update({ sort_order: index })
-            .eq('id', evt.id)
-        );
-
-        await Promise.all(updatePromises);
-      } catch (error) {
-        console.error('일정 순서 저장 실패:', error);
-        alert('순서 변경을 저장하는 중 오류가 발생했습니다.');
-      }
+    if (draggedItemId === null || draggedItemId === targetId) {
+      setDraggedItemId(null);
+      setDragOverId(null);
+      return;
     }
+
+    const originalEvents = events;
+
+    // 정렬은 날짜별 목록이 아닌 전체 일정의 단일 순서로 관리합니다.
+    // 따라서 한 날짜에서 드래그한 결과가 다른 날짜의 순서 목록에도 일관되게 반영됩니다.
+    const reorderedEvents = reorderById(
+      [...events].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
+      draggedItemId,
+      targetId
+    );
+    const updatedEvents = reorderedEvents.map((evt, index) => ({
+      ...evt,
+      sortOrder: index,
+    }));
+
+    setEvents(updatedEvents);
     setDraggedItemId(null);
     setDragOverId(null);
+
+    try {
+      // 순서 저장이 실패하면 UI를 원래 상태로 복원합니다.
+      const results = await Promise.all(
+        updatedEvents.map((evt) =>
+          supabase
+            .from('cal_events')
+            .update({ sort_order: evt.sortOrder })
+            .eq('id', evt.id)
+        )
+      );
+      const failed = results.find((result) => result.error);
+      if (failed?.error) throw failed.error;
+    } catch (error) {
+      console.error('일정 순서 저장 실패:', error);
+      setEvents(originalEvents);
+      alert('순서 변경을 저장하지 못했습니다. 다시 시도해주세요.');
+    }
   };
   
   const handleDragEnd = () => {
@@ -370,6 +393,7 @@ export default function CustomNotionCalendar() {
           start_date: newStartDate,
           end_date: newEndDate,
           color: newColor,
+          sort_order: events.length,
           user_id: currentUser?.id || null
         },
       ])
@@ -390,7 +414,8 @@ export default function CustomNotionCalendar() {
         title: data.title,
         startDate: data.start_date,
         endDate: data.end_date,
-        color: data.color
+        color: data.color,
+        sortOrder: events.length,
       };
 
       setEvents((prev) => [...prev, addedEvent]);
@@ -662,78 +687,75 @@ export default function CustomNotionCalendar() {
   }
 
   const getEventsForDate = (dateStr: string) => {
-    return events.filter((evt) => dateStr >= evt.startDate && dateStr <= evt.endDate);
+    return events
+      .filter((evt) => dateStr >= evt.startDate && dateStr <= evt.endDate)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   };
 
   const getMemosForDate = (dateStr: string) => {
     return memos.filter((m) => m.dateStr === dateStr);
   };
 
+  // 전역 정렬 순서를 기준으로 전체 기간에 걸친 고정 레인을 한 번 계산합니다.
+  // 일정이 여러 주에 걸쳐도 같은 lane을 사용하므로 막대의 높이가 주마다 바뀌지 않습니다.
+  const getGlobalEventLanes = () => {
+    const lanes: CalendarEvent[][] = [];
+    const laneByEventId = new Map<string, number>();
+    const orderedEvents = [...events].sort((a, b) => {
+      const orderA = a.sortOrder ?? events.findIndex((evt) => evt.id === a.id);
+      const orderB = b.sortOrder ?? events.findIndex((evt) => evt.id === b.id);
+      return orderA - orderB;
+    });
+
+    orderedEvents.forEach((evt) => {
+      // 이전에 정렬된 일정 중 겹치는 일정보다 위쪽 레인으로 새 일정이
+      // 올라가지 않게 합니다. 이렇게 해야 일정 순서 목록과 막대의 위아래가 일치합니다.
+      const overlappingPriorLanes = orderedEvents
+        .slice(0, orderedEvents.findIndex((item) => item.id === evt.id))
+        .filter((prior) => evt.startDate <= prior.endDate && evt.endDate >= prior.startDate)
+        .map((prior) => laneByEventId.get(prior.id) ?? -1);
+      let lane = overlappingPriorLanes.length > 0
+        ? Math.max(...overlappingPriorLanes) + 1
+        : 0;
+
+      // 같은 레인에 날짜가 겹치는 일정이 있는 경우 아래 레인으로 이동합니다.
+      while (lanes[lane]?.some(
+        (placed) => evt.startDate <= placed.endDate && evt.endDate >= placed.startDate
+      )) {
+        lane++;
+      }
+
+      if (!lanes[lane]) lanes[lane] = [];
+      lanes[lane].push(evt);
+      laneByEventId.set(evt.id, lane);
+    });
+
+    return laneByEventId;
+  };
+
+  const eventLanes = getGlobalEventLanes();
+
   const getWeekEventLayout = (weekDays: typeof calendarDays) => {
     const weekStartStr = weekDays[0].dateStr;
     const weekEndStr = weekDays[6].dateStr;
-
-    // 해당 주간에 걸치는 이벤트 필터링
     const weekEvents = events.filter(
       (evt) => evt.startDate <= weekEndStr && evt.endDate >= weekStartStr
     );
 
-    // ★ 핵심 수정: 사용자가 드래그 앤 드롭으로 바꾼 전체 events 배열의 순서(인덱스)를 기준으로 정렬
-    weekEvents.sort((a, b) => {
-      const indexA = events.findIndex((e) => e.id === a.id);
-      const indexB = events.findIndex((e) => e.id === b.id);
-      return indexA - indexB;
+    return weekEvents.map((evt) => {
+      // 주 시작/끝을 넘어가는 일정은 이번 주에 보이는 부분만 렌더링합니다.
+      const visibleStart = evt.startDate < weekStartStr ? weekStartStr : evt.startDate;
+      const visibleEnd = evt.endDate > weekEndStr ? weekEndStr : evt.endDate;
+      const startCol = weekDays.findIndex((day) => day.dateStr === visibleStart);
+      const endCol = weekDays.findIndex((day) => day.dateStr === visibleEnd);
+
+      return {
+        event: evt,
+        startCol: startCol === -1 ? 0 : startCol,
+        span: (endCol === -1 ? 6 : endCol) - (startCol === -1 ? 0 : startCol) + 1,
+        level: eventLanes.get(evt.id) ?? 0,
+      };
     });
-
-    const slots: Array<Array<CalendarEvent | null>> = [];
-
-    const renderedEvents: Array<{
-      event: CalendarEvent;
-      startCol: number;
-      span: number;
-      level: number;
-    }> = [];
-
-    weekEvents.forEach((evt) => {
-      const startIndex = weekDays.findIndex((d) => d.dateStr === evt.startDate);
-      const startCol = startIndex === -1 ? 0 : startIndex;
-
-      const endIndex = weekDays.findIndex((d) => d.dateStr === evt.endDate);
-      const endCol = endIndex === -1 ? 6 : endIndex;
-
-      const span = endCol - startCol + 1;
-
-      let targetLevel = -1;
-      let level = 0;
-
-      while (targetLevel === -1) {
-        if (!slots[level]) {
-          slots[level] = [null, null, null, null, null, null, null];
-        }
-
-        let isCollision = false;
-        for (let c = startCol; c <= endCol; c++) {
-          if (slots[level][c] !== null) {
-            isCollision = true;
-            break;
-          }
-        }
-
-        if (!isCollision) {
-          targetLevel = level;
-        } else {
-          level++;
-        }
-      }
-
-      for (let c = startCol; c <= endCol; c++) {
-        slots[targetLevel][c] = evt;
-      }
-
-      renderedEvents.push({ event: evt, startCol, span, level: targetLevel });
-    });
-
-    return renderedEvents;
   };
 
   return (
@@ -741,6 +763,14 @@ export default function CustomNotionCalendar() {
       <Sidebar />
 
       <div className="flex-1 flex flex-col h-full overflow-hidden relative min-w-0">
+        {/* 잠금 상태 안내 배너 */}
+        {isLocked && (
+          <div className="flex items-center justify-center gap-2 bg-red-50 border-b border-red-200 text-red-700 text-xs font-bold py-2 shrink-0">
+            <Lock className="w-3.5 h-3.5" />
+            <span>잠금 상태입니다. 자물쇠를 다시 누르면 편집할 수 있습니다.</span>
+          </div>
+        )}
+
         <header className="h-20 flex items-center justify-between px-8 bg-white shrink-0 relative">
           <div className="flex items-center gap-1">
             <button 
@@ -751,18 +781,41 @@ export default function CustomNotionCalendar() {
               <X className="w-5 h-5" />
             </button>
             <button 
-              onClick={() => setIsAddModalOpen(true)} 
-              className="p-1.5 hover:bg-gray-100 rounded-full text-gray-700 transition-colors"
-              title="일정 추가"
+              onClick={() => {
+                if (isLocked) {
+                  alert("잠금 상태에서는 추가할 수 없습니다.");
+                  return;
+                }
+                setIsAddModalOpen(true);
+              }} 
+              disabled={isLocked}
+              className="p-1.5 hover:bg-gray-100 disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed rounded-full text-gray-700 transition-colors"
+              title={isLocked ? "잠금 상태에서는 추가할 수 없습니다" : "일정 추가"}
             >
               <Plus className="w-5 h-5" />
             </button>
             <button 
-              onClick={() => setIsAvailabilityModalOpen(true)} 
-              className="p-1.5 hover:bg-gray-100 rounded-full text-gray-700 transition-colors"
-              title="참여 가능일 설정"
+              onClick={() => {
+                if (isLocked) {
+                  alert("잠금 상태에서는 참여 가능일을 변경할 수 없습니다.");
+                  return;
+                }
+                setIsAvailabilityModalOpen(true);
+              }} 
+              disabled={isLocked}
+              className="p-1.5 hover:bg-gray-100 disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed rounded-full text-gray-700 transition-colors"
+              title={isLocked ? "잠금 상태에서는 설정을 변경할 수 없습니다" : "참여 가능일 설정"}
             >
               <CalendarIcon className="w-5 h-5" />
+            </button>
+            {/* 참여 가능일 아이콘(CalendarIcon) 바로 오른쪽에 '오늘' 버튼 배치 */}
+            <button
+              type="button"
+              onClick={goToToday}
+              className="text-xs font-bold text-sky-200 hover:text-blue-500 transition-colors px-2 py-1.5"
+              style={{ textDecoration: 'none' }}
+            >
+              오늘
             </button>
           </div>
 
@@ -785,17 +838,20 @@ export default function CustomNotionCalendar() {
           </div>
 
           <div className="flex items-center gap-3">
-            <button
+            {/* 자물쇠 토글 버튼 */}
+            <button 
               type="button"
-              onClick={goToToday}
-              className="text-xs font-bold text-sky-200 hover:text-blue-500 transition-colors"
-              style={{ textDecoration: 'none' }}
+              onClick={() => setIsLocked((prev) => !prev)}
+              className={`p-2 rounded-lg border transition-colors ${
+                isLocked
+                  ? "bg-[#FF4D4D] border-[#FF4D4D] text-white shadow-sm"
+                  : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+              }`}
+              title={isLocked ? "잠금 해제 (편집 가능)" : "잠그기 (편집 불가)"}
             >
-              오늘
+              {isLocked ? <Lock className="w-5 h-5" /> : <Unlock className="w-5 h-5" />}
             </button>
-            <button className="p-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-black">
-              <Lock className="w-5 h-5" />
-            </button>
+
             <button className="p-2 border border-gray-300 hover:bg-gray-50 rounded-lg text-black flex items-center gap-1">
               <span className="text-xs font-bold">AI 생성</span>
             </button>
@@ -959,25 +1015,33 @@ export default function CustomNotionCalendar() {
                 {getEventsForDate(selectedDate).length === 0 ? (
                   <p className="text-xs text-gray-400 py-1">등록된 일정이 없습니다.</p>
                 ) : (
-                  getEventsForDate(selectedDate).map((evt, idx) => (
+                  getEventsForDate(selectedDate).map((evt) => (
                     <div
                       key={evt.id}
-                      draggable
-                      onDragStart={() => handleDragStart(evt.id)}
-                      onDragOver={(e) => handleDragOverItem(e, evt.id)}
-                      onDrop={() => handleDrop(evt.id)}
+                      draggable={!isLocked}
+                      onDragStart={() => !isLocked && handleDragStart(evt.id)}
+                      onDragOver={(e) => !isLocked && handleDragOverItem(e, evt.id)}
+                      onDrop={() => !isLocked && handleDrop(evt.id)}
                       onDragEnd={handleDragEnd}
-                      onClick={() => handleOpenEditModal(evt)}
-                      className={`flex items-center justify-between p-2 rounded cursor-grab active:cursor-grabbing border transition-all ${
-                        dragOverId === evt.id ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-100 bg-white hover:bg-gray-50'
-                      }`}
+                      onClick={() => {
+                        if (isLocked) {
+                          alert("잠금 상태에서는 일정을 수정할 수 없습니다.");
+                          return;
+                        }
+                        handleOpenEditModal(evt);
+                      }}
+                      className={`flex items-center justify-between p-2 rounded border transition-all ${
+                        isLocked 
+                          ? 'cursor-not-allowed opacity-75 border-gray-100 bg-white' 
+                          : 'cursor-grab active:cursor-grabbing hover:bg-gray-50 border-gray-100 bg-white'
+                      } ${dragOverId === evt.id ? 'border-blue-500 bg-blue-50 scale-[1.01]' : ''}`}
                     >
                       <div className="flex items-center gap-2 overflow-hidden">
                         <GripVertical className="w-4 h-4 text-gray-400 shrink-0" />
                         <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: evt.color }} />
                         <span className="text-xs font-bold text-gray-800 truncate">{evt.title}</span>
                       </div>
-                      {idx >= 3 && (
+                      {(eventLanes.get(evt.id) ?? 0) >= 3 && (
                         <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
                           숨김
                         </span>
@@ -1054,16 +1118,15 @@ export default function CustomNotionCalendar() {
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <label className="text-xs font-bold text-black shrink-0">제목:</label>
-                    <input
-                      type="text"
-                      value={memoTitle}
-                      onChange={(e) => setNewTitle ? setNewTitle(e.target.value) : setMemoTitle(e.target.value)} // 방어 코드
-                      onInput={(e) => setMemoTitle((e.target as HTMLInputElement).value)}
-                      placeholder="메모 제목"
-                      className="w-full px-2 py-1.5 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400"
-                    />
-                  </div>
+                  <label className="text-xs font-bold text-black shrink-0">제목:</label>
+                  <input
+                    type="text"
+                    value={memoTitle}
+                    onChange={(e) => setMemoTitle(e.target.value)}
+                    placeholder="메모 제목"
+                    className="w-full px-2 py-1.5 rounded-md bg-white border border-gray-200 text-xs text-black focus:outline-none focus:border-blue-400"
+                  />
+                </div>
 
                   <div className="flex-1 flex flex-col gap-1 min-h-0">
                     <label className="text-xs font-bold text-black shrink-0">내용:</label>
@@ -1159,9 +1222,16 @@ export default function CustomNotionCalendar() {
                     <div className="flex items-center gap-0.5 shrink-0">
                       <button
                         type="button"
-                        onClick={handleOpenEditMemo}
-                        className="p-1 hover:bg-gray-400/50 rounded-full text-black transition-colors"
-                        title="수정"
+                        disabled={isLocked}
+                        onClick={() => {
+                          if (isLocked) {
+                            alert("잠금 상태에서는 메모를 수정할 수 없습니다.");
+                            return;
+                          }
+                          handleOpenEditMemo();
+                        }}
+                        className="p-1 hover:bg-gray-400/50 disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed rounded-full text-black transition-colors"
+                        title={isLocked ? "잠금 상태에서는 수정할 수 없습니다" : "수정"}
                       >
                         <Edit3 className="w-4 h-4" />
                       </button>
@@ -1192,13 +1262,18 @@ export default function CustomNotionCalendar() {
                     <h3 className="font-black text-xl text-black">메모</h3>
                     <button
                       type="button"
+                      disabled={isLocked}
                       onClick={() => {
+                        if (isLocked) {
+                          alert("잠금 상태에서는 메모를 작성할 수 없습니다.");
+                          return;
+                        }
                         setMemoTitle('');
                         setMemoContent('');
                         setMemoMode('write');
                       }}
-                      className="p-1 hover:bg-gray-400/50 rounded-full text-black transition-colors"
-                      title="메모 작성"
+                      className="p-1 hover:bg-gray-400/50 disabled:hover:bg-transparent disabled:opacity-40 disabled:cursor-not-allowed rounded-full text-black transition-colors"
+                      title={isLocked ? "잠금 상태에서는 작성할 수 없습니다" : "메모 작성"}
                     >
                       <Plus className="w-5 h-5" />
                     </button>

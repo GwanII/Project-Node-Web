@@ -27,18 +27,14 @@ type FolderRow = { id: string; name: string; created_at: string };
 type FileRow = {
   id: string; name: string; type: "image" | "url" | "document";
   uploader: string; size?: string; url?: string;
-  storage_path?: string; folder_id?: string | null; created_at: string;
+  storage_path?: string; folder_id?: string | null; project_id?: string | null; created_at: string;
 };
 type PendingRow = {
   id: string; name: string; type: "image" | "document"; size: string; storage_path: string;
 };
 
-const MEETING_DATA: Record<string, string[]> = {
-  "프로젝트 NODE": ["1차 회의록","2차 회의록","3차 회의록","4차 회의록","5차 회의록"],
-  "PBL2":          ["1차 회의록","2차 회의록","3차 회의록"],
-  "AI 공모전":     ["1차 회의록","2차 회의록"],
-};
-const PROJECT_NAMES = Object.keys(MEETING_DATA);
+type ProjectRow = { id: string; project_name: string };
+type MeetingRow = { id: string; name: string; project_id: string | null; project_name: string | null };
 const TYPE_ICON:  Record<string, string> = { image:"🖼", url:"🔗", document:"📄" };
 const TYPE_LABEL: Record<string, string> = { image:"사진", url:"URL", document:"문서" };
 async function getCurrentUserId(): Promise<string> {
@@ -61,7 +57,11 @@ export default function StoragePage() {
   const [urlInput, setUrlInput]               = useState("");
   const [urlName, setUrlName]                 = useState("");
   const [meetingStep, setMeetingStep]         = useState<null|"project"|"meeting">(null);
-  const [meetingProject, setMeetingProject]   = useState("");
+  const [meetingProject, setMeetingProject]   = useState<ProjectRow|null>(null);
+  const [projects, setProjects]               = useState<ProjectRow[]>([]);
+  const [meetings, setMeetings]               = useState<MeetingRow[]>([]);
+  const [currentProject, setCurrentProject]   = useState<ProjectRow|null>(null);
+  const [showProjectMenu, setShowProjectMenu] = useState(false);
   const [currentFolder, setCurrentFolder]     = useState<FolderRow|null>(null);
   const [showFolderInput, setShowFolderInput] = useState(false);
   const [newFolderName, setNewFolderName]     = useState("");
@@ -94,15 +94,29 @@ export default function StoragePage() {
     setLoading(true);
     const userId = await getCurrentUserId();
     setUploaderId(userId);
-    const [{ data: foldersData }, { data: filesData }, { data: profileData }] = await Promise.all([
+    const [
+      { data: foldersData }, { data: filesData }, { data: profileData },
+      { data: projectRows }, { data: meetingRows },
+    ] = await Promise.all([
       supabase.from("folders").select("*").order("created_at", { ascending: false }),
       supabase.from("files").select("*").order("created_at", { ascending: false }),
       supabase.from("profiles").select("name, nickname").eq("id", userId).maybeSingle(),
+      supabase.from("projectdata").select("id, project_name")
+        .eq("user_id", userId).order("created_at", { ascending: false }),
+      supabase.from("sheet_items").select("id, name, project_id, project_name")
+        .eq("section", "files").order("sort_order", { ascending: true }),
     ]);
     setFolders((foldersData as FolderRow[]) ?? []);
     setFiles((filesData as FileRow[]) ?? []);
     if (profileData?.nickname) setUploaderName(profileData.nickname);
     if (profileData?.nickname) setUploaderId(profileData.nickname);
+
+    const pjs = (projectRows as ProjectRow[]) ?? [];
+    setProjects(pjs);
+    setMeetings((meetingRows as MeetingRow[]) ?? []);
+    // 업로드할 프로젝트가 아직 안 정해졌으면 가장 최근 프로젝트로
+    setCurrentProject(prev => prev ?? pjs[0] ?? null);
+
     setLoading(false);
     setSelected(new Set());
   }, []);
@@ -176,6 +190,7 @@ export default function StoragePage() {
         size: p.size,
         storage_path: p.storage_path,
         folder_id: currentFolder?.id ?? null,
+        project_id: currentProject?.id ?? null,
       }))
     );
 
@@ -212,19 +227,44 @@ export default function StoragePage() {
     const safeFileName = `${Date.now()}_${f.name.replace(/[^a-zA-Z0-9._-]/g,"_")}`;
     const { error } = await supabase.storage.from("cobalt-files").upload(safeFileName, f);
     if (error) { alert("업로드 실패: " + error.message); setUploading(false); return; }
-    await supabase.from("files").insert({ name: f.name, type, uploader: uploaderId, size, storage_path: safeFileName, folder_id: currentFolder?.id ?? null });
+    await supabase.from("files").insert({
+      name: f.name, type, uploader: uploaderId, size,
+      storage_path: safeFileName,
+      folder_id: currentFolder?.id ?? null,
+      project_id: currentProject?.id ?? null,
+    });
     await fetchAll(); setUploading(false); e.target.value = "";
   };
 
-  const handleMeetingSelect = async (meeting: string) => {
-    const name = `[${meetingProject}] ${meeting}.txt`;
-    await supabase.from("files").insert({ name, type: "document", uploader: uploaderId, size: "12 KB", folder_id: currentFolder?.id ?? null });
-    await fetchAll(); setMeetingStep(null); setMeetingProject("");
+  const handleMeetingSelect = async (meeting: MeetingRow) => {
+    const projectName = meetingProject?.project_name ?? meeting.project_name ?? "";
+    const name = `[${projectName}] ${meeting.name}`;
+
+    if (files.some(f => f.name === name)) {
+      alert("이미 가져온 회의록이에요.");
+      return;
+    }
+
+    const { error } = await supabase.from("files").insert({
+      name,
+      type: "document",
+      uploader: uploaderId,
+      folder_id: currentFolder?.id ?? null,
+      project_id: meetingProject?.id ?? meeting.project_id ?? null,
+    });
+    if (error) { alert("회의록 가져오기 실패: " + error.message); return; }
+
+    await fetchAll(); setMeetingStep(null); setMeetingProject(null);
   };
 
   const handleAddUrl = async () => {
     if (!urlInput.trim()) return;
-    await supabase.from("files").insert({ name: urlName.trim() || urlInput, type: "url", uploader: uploaderId, url: urlInput, folder_id: currentFolder?.id ?? null });
+    await supabase.from("files").insert({
+      name: urlName.trim() || urlInput, type: "url", uploader: uploaderId,
+      url: urlInput,
+      folder_id: currentFolder?.id ?? null,
+      project_id: currentProject?.id ?? null,
+    });
     await fetchAll(); setUrlInput(""); setUrlName(""); setShowUrlInput(false);
   };
 
@@ -328,7 +368,31 @@ export default function StoragePage() {
             {currentFolder && <button onClick={() => setCurrentFolder(null)} style={{ background:"none", border:"none", cursor:"pointer", color:COLOR.gray400, fontSize:20, padding:0 }}>←</button>}
             <p style={{ margin:0, fontSize:20, fontWeight:700 }}>{currentFolder ? `📁 ${currentFolder.name}` : "자료 보관함"}</p>
           </div>
-          <div style={{ display:"flex", gap:10 }}>
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            {/* 업로드할 프로젝트 선택 — 여기서 고른 프로젝트로 파일이 묶여요 */}
+            <div style={{ position:"relative" }}>
+              <button onClick={() => setShowProjectMenu(v => !v)} title="업로드한 파일이 묶일 프로젝트"
+                style={{ background:COLOR.white, color: currentProject?COLOR.point:COLOR.gray400, border:`1px solid ${COLOR.border}`, borderRadius:10, padding:"9px 14px", fontSize:13, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                📁 {currentProject?.project_name ?? "프로젝트 없음"} {showProjectMenu ? "▲" : "▾"}
+              </button>
+              {showProjectMenu && (
+                <div style={{ position:"absolute", left:0, top:"calc(100% + 6px)", background:COLOR.white, border:`1px solid ${COLOR.border}`, borderRadius:10, zIndex:100, minWidth:200, boxShadow:"0 8px 24px rgba(0,0,0,0.12)", overflow:"hidden" }}>
+                  {projects.length === 0 && (
+                    <p style={{ margin:0, padding:"12px 14px", fontSize:13, color:COLOR.gray400 }}>참여 중인 프로젝트가 없어요</p>
+                  )}
+                  {projects.map(p => (
+                    <button key={p.id} onClick={() => { setCurrentProject(p); setShowProjectMenu(false); }}
+                      style={{ display:"block", width:"100%", padding:"11px 14px", background: currentProject?.id===p.id?COLOR.mainBg:COLOR.white, border:"none", fontSize:14, cursor:"pointer", textAlign:"left", color: currentProject?.id===p.id?COLOR.point:COLOR.gray800, fontWeight: currentProject?.id===p.id?600:400 }}>
+                      📁 {p.project_name}
+                    </button>
+                  ))}
+                  <button onClick={() => { setCurrentProject(null); setShowProjectMenu(false); }}
+                    style={{ display:"block", width:"100%", padding:"11px 14px", background:COLOR.white, border:"none", borderTop:`1px solid ${COLOR.gray100}`, fontSize:13, cursor:"pointer", textAlign:"left", color:COLOR.gray600 }}>
+                    프로젝트 없이 올리기
+                  </button>
+                </div>
+              )}
+            </div>
             {!currentFolder && <button onClick={() => setShowFolderInput(true)} style={{ background:COLOR.white, color:COLOR.point, border:`1px solid ${COLOR.border}`, borderRadius:10, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:"pointer" }}>📁 폴더 만들기</button>}
             <div ref={uploadBtnRef} style={{ position:"relative" }}>
               <button onClick={() => setShowUploadMenu(v => !v)} disabled={uploading} style={{ background:uploading?COLOR.gray400:COLOR.point, color:"#fff", border:"none", borderRadius:10, padding:"9px 16px", fontSize:13, fontWeight:600, cursor:uploading?"default":"pointer" }}>
@@ -388,11 +452,21 @@ export default function StoragePage() {
               <span>📝</span><p style={{ margin:0, fontSize:14, fontWeight:600 }}>프로젝트 선택</p>
               <button onClick={() => setMeetingStep(null)} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:COLOR.gray400, fontSize:18, padding:0 }}>✕</button>
             </div>
-            {PROJECT_NAMES.map(p => (
-              <button key={p} onClick={() => { setMeetingProject(p); setMeetingStep("meeting"); }} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"12px 14px", background:COLOR.gray50, border:`1px solid ${COLOR.border}`, borderRadius:10, cursor:"pointer", fontSize:14, color:COLOR.gray800, textAlign:"left", marginBottom:8 }}>
-                <span>📁</span>{p}<span style={{ marginLeft:"auto", color:COLOR.gray400 }}>›</span>
-              </button>
-            ))}
+            {projects.length === 0 && (
+              <p style={{ margin:0, fontSize:13, color:COLOR.gray400 }}>참여 중인 프로젝트가 없어요.</p>
+            )}
+            {projects.map(p => {
+              const cnt = meetings.filter(m =>
+                (m.project_id && m.project_id === p.id) || m.project_name === p.project_name
+              ).length;
+              return (
+                <button key={p.id} onClick={() => { setMeetingProject(p); setMeetingStep("meeting"); }} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"12px 14px", background:COLOR.gray50, border:`1px solid ${COLOR.border}`, borderRadius:10, cursor:"pointer", fontSize:14, color:COLOR.gray800, textAlign:"left", marginBottom:8 }}>
+                  <span>📁</span>{p.project_name}
+                  <span style={{ fontSize:12, color:COLOR.gray400 }}>기록 {cnt}개</span>
+                  <span style={{ marginLeft:"auto", color:COLOR.gray400 }}>›</span>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -401,14 +475,27 @@ export default function StoragePage() {
           <div style={{ background:COLOR.white, border:`1px solid ${COLOR.border}`, borderRadius:12, padding:16, marginBottom:14 }}>
             <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
               <button onClick={() => setMeetingStep("project")} style={{ background:"none", border:"none", cursor:"pointer", color:COLOR.gray600, fontSize:18, padding:0 }}>←</button>
-              <span>📁</span><p style={{ margin:0, fontSize:14, fontWeight:600 }}>{meetingProject}</p>
-              <button onClick={() => { setMeetingStep(null); setMeetingProject(""); }} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:COLOR.gray400, fontSize:18, padding:0 }}>✕</button>
+              <span>📁</span><p style={{ margin:0, fontSize:14, fontWeight:600 }}>{meetingProject?.project_name}</p>
+              <button onClick={() => { setMeetingStep(null); setMeetingProject(null); }} style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:COLOR.gray400, fontSize:18, padding:0 }}>✕</button>
             </div>
-            {MEETING_DATA[meetingProject]?.map(m => (
-              <button key={m} onClick={() => handleMeetingSelect(m)} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"12px 14px", background:COLOR.gray50, border:`1px solid ${COLOR.border}`, borderRadius:10, cursor:"pointer", fontSize:14, color:COLOR.gray800, textAlign:"left", marginBottom:8 }}>
-                <span>📄</span>{m}<span style={{ marginLeft:"auto", color:COLOR.point, fontSize:13 }}>가져오기</span>
-              </button>
-            ))}
+            {(() => {
+              const list = meetings.filter(m =>
+                (m.project_id && m.project_id === meetingProject?.id) ||
+                m.project_name === meetingProject?.project_name
+              );
+              if (list.length === 0) {
+                return <p style={{ margin:0, fontSize:13, color:COLOR.gray400 }}>이 프로젝트에 저장된 회의록이 없어요.</p>;
+              }
+              return list.map(m => {
+                const already = files.some(f => f.name === `[${meetingProject?.project_name}] ${m.name}`);
+                return (
+                  <button key={m.id} onClick={() => handleMeetingSelect(m)} disabled={already} style={{ display:"flex", alignItems:"center", gap:10, width:"100%", padding:"12px 14px", background:COLOR.gray50, border:`1px solid ${COLOR.border}`, borderRadius:10, cursor:already?"default":"pointer", fontSize:14, color:already?COLOR.gray400:COLOR.gray800, textAlign:"left", marginBottom:8 }}>
+                    <span>📄</span>{m.name}
+                    <span style={{ marginLeft:"auto", color:already?COLOR.gray400:COLOR.point, fontSize:13 }}>{already ? "가져옴 ✓" : "가져오기"}</span>
+                  </button>
+                );
+              });
+            })()}
           </div>
         )}
 
@@ -610,6 +697,7 @@ export default function StoragePage() {
                   <p style={{ margin:"2px 0 0", fontSize:12, color:COLOR.gray400 }}>
                     {TYPE_LABEL[file.type]} · {file.uploader} · {formatDate(file.created_at)}{file.size && ` · ${file.size}`}
                     {file.folder_id && <span style={{ marginLeft:6, color:COLOR.point }}>📁 {folders.find(f=>f.id===file.folder_id)?.name}</span>}
+                    {file.project_id && <span style={{ marginLeft:6, color:COLOR.point }}>🏷 {projects.find(p=>p.id===file.project_id)?.project_name ?? "다른 프로젝트"}</span>}
                   </p>
                 </div>
                 <div style={{ display:"flex", gap:6, flexShrink:0 }}>

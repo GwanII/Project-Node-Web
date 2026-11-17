@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import * as Y from "yjs";
 import {
   MousePointer2,
@@ -23,15 +24,18 @@ import {
 import Sidebar from "../shareSheet/Sidebar";
 import EditAccessBar from "../shareSheet/EditAccessBar";
 import MemberStrip from "../shareSheet/MemberStrip";
+import ProjectPicker from "../shareSheet/ProjectPicker";
 import {
   buildMembers,
   getMyIdentity,
   loadDocument,
+  slideDocId,
   type MyIdentity,
 } from "../shareSheet/data";
 import { useEditAccess } from "../shareSheet/useEditAccess";
 import { useCollaboration } from "../shareSheet/useCollaboration";
 import { usePresence } from "../shareSheet/usePresence";
+import SelectionBar from "./SelectionBar";
 import ShapePicker from "./ShapePicker";
 import SlideCanvas from "./SlideCanvas";
 import SlideList from "./SlideList";
@@ -43,9 +47,13 @@ import {
   moveSlide,
   objectsOf,
   readSlides,
+  bringToFront,
   groupObjects,
   hasGroupedObject,
+  nudgeObjects,
+  paintObjects,
   removeSlide,
+  sendToBack,
   setSlideLocked,
   ungroupObjects,
   slideOrderOf,
@@ -61,9 +69,25 @@ import {
  * documents 표의 다른 한 줄을 쓰므로, 표를 새로 만들 필요가 없다.
  */
 
-const DECK_ID = "default-deck";
-
+/**
+ * 주소의 ?project= 를 읽으려면 useSearchParams 가 필요한데,
+ * 그건 Suspense 로 감싸지 않으면 프로덕션 빌드가 실패한다.
+ * (개발 모드에서는 멀쩡해 보여서 놓치기 쉽다 — 팀의 /login 도 같은 방식이다.)
+ */
 export default function ShareSlidePage() {
+  return (
+    <Suspense fallback={null}>
+      <ShareSlideInner />
+    </Suspense>
+  );
+}
+
+function ShareSlideInner() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("project");
+  // 프로젝트가 정해져야 어느 슬라이드를 열지 알 수 있다.
+  const deckId = slideDocId(projectId);
+
   // 아직 확인 중이면 null 이다. 그래서 버튼이 깜빡이지 않는다.
   const [me, setMe] = useState<MyIdentity | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -71,7 +95,7 @@ export default function ShareSlidePage() {
   useEffect(() => {
     let alive = true;
     // documents 에 이 줄이 있어야 편집 상태를 저장할 수 있다.
-    Promise.all([getMyIdentity(), loadDocument(DECK_ID)]).then(([found]) => {
+    Promise.all([getMyIdentity(), loadDocument(deckId, projectId)]).then(([found]) => {
       if (!alive) return;
       setMe(found);
       setIsReady(true);
@@ -79,12 +103,12 @@ export default function ShareSlidePage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [deckId, projectId]);
 
   const myName = me?.name ?? null;
 
-  const collab = useCollaboration(DECK_ID, isReady);
-  const presence = usePresence(DECK_ID, myName);
+  const collab = useCollaboration(deckId, isReady);
+  const presence = usePresence(deckId, myName);
 
   // 명단에 없는 사람(손님 등)도 접속하면 뒤에 붙여서 보여준다.
   const members = useMemo(() => buildMembers(presence.names), [presence.names]);
@@ -255,6 +279,22 @@ export default function ShareSlidePage() {
     ungroupObjects(ydoc, selectedIds, origin);
   }, [ydoc, selectedIds, isLocked, origin]);
 
+  const paintSelected = useCallback(
+    (patch: { fill?: string; stroke?: string }) => {
+      if (!ydoc || isLocked) return;
+      paintObjects(ydoc, selectedIds, patch, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
+  const nudgeSelected = useCallback(
+    (dx: number, dy: number) => {
+      if (!ydoc || isLocked) return;
+      nudgeObjects(ydoc, selectedIds, dx, dy, origin);
+    },
+    [ydoc, selectedIds, isLocked, origin]
+  );
+
   const selectionHasGroup = ydoc ? hasGroupedObject(ydoc, selectedIds) : false;
 
   useEffect(() => {
@@ -279,6 +319,15 @@ export default function ShareSlidePage() {
         e.preventDefault();
         if (e.shiftKey) ungroupSelected();
         else groupSelected();
+      } else if (e.key.startsWith("Arrow")) {
+        if (selectedIds.length === 0) return;
+        e.preventDefault();
+        // Shift 를 같이 누르면 10칸씩. 자리를 크게 옮길 때 편하다.
+        const step = e.shiftKey ? 10 : 1;
+        if (e.key === "ArrowLeft") nudgeSelected(-step, 0);
+        else if (e.key === "ArrowRight") nudgeSelected(step, 0);
+        else if (e.key === "ArrowUp") nudgeSelected(0, -step);
+        else if (e.key === "ArrowDown") nudgeSelected(0, step);
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (selectedIds.length === 0) return;
         e.preventDefault();
@@ -290,9 +339,28 @@ export default function ShareSlidePage() {
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [undoManager, deleteSelected, selectedIds, editingId, groupSelected, ungroupSelected]);
+  }, [
+    undoManager,
+    deleteSelected,
+    selectedIds,
+    editingId,
+    groupSelected,
+    ungroupSelected,
+    nudgeSelected,
+  ]);
 
   // --- 그리기 -------------------------------------------------------------
+  /*
+   * 프로젝트를 안 고르고 들어오면 어느 슬라이드를 열어야 할지 알 수 없다.
+   * 프로젝트 화면에서 링크를 타고 오는 게 본래 흐름이지만, 아직 그 링크가
+   * 없어서 여기서 고를 수 있게 한다.
+   */
+  if (!projectId) {
+    return (
+      <ProjectPicker what="슬라이드" hrefFor={(id) => `/shareSlide?project=${id}`} />
+    );
+  }
+
   if (!ydoc || !activeId) {
     return (
       <div className="flex h-screen items-center justify-center bg-white text-sm text-gray-400">
@@ -495,8 +563,17 @@ export default function ShareSlidePage() {
 
         <EditAccessBar me={me} access={access} what="슬라이드" />
 
+        <SelectionBar
+          count={isLocked ? 0 : selectedIds.length}
+          onFill={(fill) => paintSelected({ fill })}
+          onStroke={(stroke) => paintSelected({ stroke })}
+          onBringToFront={() => ydoc && bringToFront(ydoc, selectedIds, origin)}
+          onSendToBack={() => ydoc && sendToBack(ydoc, selectedIds, origin)}
+        />
+
         <div className="flex-1 flex min-h-0">
           <SlideList
+            ydoc={ydoc}
             slides={slides}
             currentId={activeId}
             onSelect={(id) => {

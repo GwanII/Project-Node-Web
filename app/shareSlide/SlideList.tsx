@@ -1,11 +1,21 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import type * as Y from "yjs";
 import { Plus, Trash2, Lock, Unlock, GripVertical } from "lucide-react";
 
-import type { Slide } from "./slideData";
+import { ShapeView } from "./SlideCanvas";
+import {
+  CONTENT_TYPES,
+  SLIDE_HEIGHT,
+  SLIDE_WIDTH,
+  objectsOf,
+  readObjects,
+  type Slide,
+} from "./slideData";
 
 interface SlideListProps {
+  ydoc: Y.Doc;
   slides: Slide[];
   currentId: string | null;
   onSelect: (id: string) => void;
@@ -20,7 +30,45 @@ interface SlideListProps {
   canEdit: boolean;
 }
 
+/**
+ * 슬라이드 축소판.
+ *
+ * 좌표를 전부 비율(%)로 바꿔 그린다. 슬라이드는 항상 1280x720 기준으로
+ * 저장하므로, 비율로 두면 축소판 크기가 얼마든 알아서 맞는다.
+ *
+ * 텍스트·표·달력·투표는 안이 복잡해서 축소판에서는 회색 자리만 보여 준다.
+ * 축소판마다 편집기를 띄우면 슬라이드 수만큼 무거워진다.
+ */
+function SlideThumb({ ydoc, slideId }: { ydoc: Y.Doc; slideId: string }) {
+  const objects = readObjects(ydoc, slideId);
+
+  return (
+    <>
+      {objects.map((o) => (
+        <div
+          key={o.id}
+          className="absolute"
+          style={{
+            left: `${(o.x / SLIDE_WIDTH) * 100}%`,
+            top: `${(o.y / SLIDE_HEIGHT) * 100}%`,
+            width: `${(o.w / SLIDE_WIDTH) * 100}%`,
+            height: `${(o.h / SLIDE_HEIGHT) * 100}%`,
+            transform: o.rotation ? `rotate(${o.rotation}deg)` : undefined,
+          }}
+        >
+          {CONTENT_TYPES.includes(o.type) ? (
+            <div className="w-full h-full rounded-sm bg-gray-200/70" />
+          ) : (
+            <ShapeView object={o} />
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function SlideList({
+  ydoc,
   slides,
   currentId,
   onSelect,
@@ -32,6 +80,18 @@ export default function SlideList({
 }: SlideListProps) {
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+
+  /*
+   * 이 값 자체는 쓰지 않는다. 누가 물체를 고치면 축소판도 따라 바뀌어야 해서
+   * 다시 그리게 만드는 방아쇠다. 내용은 그릴 때마다 Yjs 에서 새로 읽는다.
+   */
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const objects = objectsOf(ydoc);
+    const onChange = () => bump((v) => v + 1);
+    objects.observe(onChange);
+    return () => objects.unobserve(onChange);
+  }, [ydoc]);
 
   return (
     <aside className="w-56 shrink-0 border-r border-gray-200 bg-white flex flex-col">
@@ -93,13 +153,15 @@ export default function SlideList({
                 </span>
               </div>
 
-              {/* 미리보기 자리. 2단계에서 실제 축소판을 넣는다. */}
+              {/* 축소판 */}
               <div
-                className={`mt-1.5 rounded-md border bg-white ${
+                className={`mt-1.5 rounded-md border bg-white relative overflow-hidden ${
                   slide.locked ? "border-gray-300" : "border-gray-200"
                 }`}
                 style={{ aspectRatio: "16 / 9" }}
-              />
+              >
+                <SlideThumb ydoc={ydoc} slideId={slide.id} />
+              </div>
 
               <div className="flex items-center justify-end gap-0.5 mt-1">
                 <button
