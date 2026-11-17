@@ -76,6 +76,8 @@ export interface SheetDocument {
   isLocked: boolean;
   /** ISO 8601 문자열 */
   updatedAt: string;
+  /** 어느 프로젝트의 문서인지. null 이면 프로젝트 구분 전에 만들어진 공용 문서다. */
+  projectId: string | null;
 }
 
 /** documents 테이블 한 줄의 모양 */
@@ -86,6 +88,13 @@ interface DocumentRow {
   strokes: Stroke[] | null;
   is_locked: boolean;
   updated_at: string;
+  /**
+   * 어느 프로젝트의 문서인지.
+   *
+   * 값이 없을 때는 아예 보내지 않는다. project_id 칼럼을 더하는 마이그레이션이
+   * 아직 적용되지 않은 DB 에서도 기존 공용 문서는 그대로 저장되게 하기 위해서다.
+   */
+  project_id?: string;
 }
 
 /** sheet_items 테이블 한 줄의 모양 */
@@ -384,6 +393,7 @@ function rowToDocument(row: DocumentRow): SheetDocument {
     strokes: row.strokes ?? [],
     isLocked: row.is_locked,
     updatedAt: row.updated_at,
+    projectId: row.project_id ?? null,
   };
 }
 
@@ -395,6 +405,8 @@ function documentToRow(doc: SheetDocument, updatedAt: string): DocumentRow {
     strokes: doc.strokes ?? [],
     is_locked: doc.isLocked,
     updated_at: updatedAt,
+    // 프로젝트가 있을 때만 칼럼을 건드린다. 위 주석 참고.
+    ...(doc.projectId ? { project_id: doc.projectId } : {}),
   };
 }
 
@@ -407,7 +419,11 @@ function documentToRow(doc: SheetDocument, updatedAt: string): DocumentRow {
  * 저장된 게 없으면 기본 문서를 만들어 넣고 그걸 돌려준다.
  * 통신이 실패해도 화면이 죽지 않도록, 최악의 경우 기본 문서를 그냥 돌려준다.
  */
-export async function loadDocument(id: string): Promise<SheetDocument> {
+export async function loadDocument(
+  id: string,
+  /** 새로 만들 때 적어 둘 프로젝트. 없으면 예전처럼 공용 문서가 된다. */
+  projectId: string | null = null
+): Promise<SheetDocument> {
   const fallback: SheetDocument = {
     id,
     title: DEFAULT_TITLE,
@@ -415,6 +431,7 @@ export async function loadDocument(id: string): Promise<SheetDocument> {
     strokes: [],
     isLocked: false,
     updatedAt: new Date().toISOString(),
+    projectId,
   };
 
   const { data, error } = await supabase
@@ -459,6 +476,66 @@ export async function saveDocument(doc: SheetDocument): Promise<SheetDocument> {
   }
 
   return { ...doc, updatedAt };
+}
+
+/**
+ * 프로젝트별 문서 id 를 만든다.
+ *
+ * 문서 id 안에 프로젝트를 넣어 두면 좋은 점이 하나 더 있다.
+ * 실시간 통신 채널 이름이 이 id 에서 만들어지기 때문에(`yjs:${id}`),
+ * id 가 나뉘면 채널도 저절로 나뉘어 프로젝트끼리 편집이 섞이지 않는다.
+ *
+ * 프로젝트를 모르면 예전 공용 문서 이름을 그대로 쓴다.
+ */
+export function sheetDocId(projectId: string | null): string {
+  return projectId ? `${projectId}:sheet` : "default-sheet";
+}
+
+export function slideDocId(projectId: string | null): string {
+  return projectId ? `${projectId}:deck` : "default-deck";
+}
+
+/** 프로젝트 목록 한 줄 */
+export interface ProjectBrief {
+  id: string;
+  name: string;
+}
+
+/**
+ * 고를 수 있는 프로젝트 목록.
+ *
+ * 로그인했으면 내가 속한 프로젝트만, 아니면 전부 보여 준다.
+ * (project_members 는 RLS 때문에 내 것만 읽히므로, 결과가 비면 전체로 떨어진다.)
+ */
+export async function listProjects(): Promise<ProjectBrief[]> {
+  const toBrief = (rows: Array<{ id: string; project_name: string | null }>) =>
+    rows.map((r) => ({ id: r.id, name: r.project_name?.trim() || "이름 없는 프로젝트" }));
+
+  try {
+    const { data: mine } = await supabase
+      .from("project_members")
+      .select("project_id")
+      .limit(50);
+
+    const ids = (mine ?? []).map((m) => (m as { project_id: string }).project_id);
+    if (ids.length > 0) {
+      const { data } = await supabase
+        .from("projectdata")
+        .select("id, project_name")
+        .in("id", ids);
+      if (data && data.length > 0) return toBrief(data);
+    }
+
+    const { data: all } = await supabase
+      .from("projectdata")
+      .select("id, project_name")
+      .order("created_at", { ascending: false })
+      .limit(50);
+    return toBrief(all ?? []);
+  } catch {
+    // 목록을 못 가져와도 화면은 돌아가야 한다.
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------

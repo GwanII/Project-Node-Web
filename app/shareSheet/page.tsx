@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Lock } from "lucide-react";
 
 import Sidebar from "./Sidebar";
@@ -8,9 +9,11 @@ import Toolbar, { type EditorMode, type Member, type SaveState } from "./Toolbar
 import Editor, { type EditorHandle } from "./Editor";
 import DrawingLayer from "./DrawingLayer";
 import EditAccessBar from "./EditAccessBar";
+import ProjectPicker from "./ProjectPicker";
 import {
   buildMembers,
   getMyIdentity,
+  sheetDocId,
   loadDocument,
   saveDocument,
   type MyIdentity,
@@ -20,13 +23,28 @@ import { usePresence } from "./usePresence";
 import { useCollaboration } from "./useCollaboration";
 import { useEditAccess } from "./useEditAccess";
 
-// 지금은 문서가 하나뿐이다. 나중에 여러 문서를 다루게 되면 주소에서 받아온다.
-const DOCUMENT_ID = "default-sheet";
-
 /** 타이핑할 때마다 저장하면 낭비라서, 잠깐 멈췄을 때 한 번만 저장한다. */
 const SAVE_DELAY_MS = 700;
 
+/**
+ * 주소의 ?project= 를 읽으려면 useSearchParams 가 필요한데,
+ * 그건 Suspense 로 감싸지 않으면 프로덕션 빌드가 실패한다.
+ * (개발 모드에서는 멀쩡해 보여서 놓치기 쉽다 — 팀의 /login 도 같은 방식이다.)
+ */
 export default function ShareSheetPage() {
+  return (
+    <Suspense fallback={null}>
+      <ShareSheetInner />
+    </Suspense>
+  );
+}
+
+function ShareSheetInner() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("project");
+  // 프로젝트가 정해져야 어느 문서를 열지 알 수 있다.
+  const documentId = sheetDocId(projectId);
+
   const [mode, setMode] = useState<EditorMode>("typing");
   const [doc, setDoc] = useState<SheetDocument | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -49,10 +67,10 @@ export default function ShareSheetPage() {
 
   const myName = me?.name ?? null;
 
-  const presence = usePresence(DOCUMENT_ID, myName);
+  const presence = usePresence(documentId, myName);
 
   // 동시 편집 준비. 내 이름을 알아낸 뒤에 시작한다.
-  const collab = useCollaboration(DOCUMENT_ID, myName !== null);
+  const collab = useCollaboration(documentId, myName !== null);
 
   /** 내가 낸 변경임을 표시하는 딱지. 편집 요청이 되돌리기에 휩쓸리지 않게 한다. */
   const accessOrigin = useMemo(() => ({}), []);
@@ -76,7 +94,7 @@ export default function ShareSheetPage() {
   // --- 불러오기 ---------------------------------------------------------
   useEffect(() => {
     let alive = true;
-    loadDocument(DOCUMENT_ID).then((loaded) => {
+    loadDocument(documentId, projectId).then((loaded) => {
       if (!alive) return;
       docRef.current = loaded;
       setDoc(loaded);
@@ -84,7 +102,7 @@ export default function ShareSheetPage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [documentId, projectId]);
 
   // --- 저장 -------------------------------------------------------------
   const flushSave = useCallback(async () => {
@@ -147,6 +165,17 @@ export default function ShareSheetPage() {
   }, [update]);
 
   // --- 그리기 -----------------------------------------------------------
+  /*
+   * 프로젝트를 안 고르고 들어오면 어느 문서를 열어야 할지 알 수 없다.
+   * 프로젝트 화면에서 링크를 타고 오는 게 본래 흐름이지만, 아직 그 링크가
+   * 없어서 여기서 고를 수 있게 한다.
+   */
+  if (!projectId) {
+    return (
+      <ProjectPicker what="시트지" hrefFor={(id) => `/shareSheet?project=${id}`} />
+    );
+  }
+
   if (!doc) {
     return (
       <div className="flex h-screen items-center justify-center bg-white text-sm text-gray-400">

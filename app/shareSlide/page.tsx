@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import * as Y from "yjs";
 import {
   MousePointer2,
@@ -23,10 +24,12 @@ import {
 import Sidebar from "../shareSheet/Sidebar";
 import EditAccessBar from "../shareSheet/EditAccessBar";
 import MemberStrip from "../shareSheet/MemberStrip";
+import ProjectPicker from "../shareSheet/ProjectPicker";
 import {
   buildMembers,
   getMyIdentity,
   loadDocument,
+  slideDocId,
   type MyIdentity,
 } from "../shareSheet/data";
 import { useEditAccess } from "../shareSheet/useEditAccess";
@@ -66,9 +69,25 @@ import {
  * documents 표의 다른 한 줄을 쓰므로, 표를 새로 만들 필요가 없다.
  */
 
-const DECK_ID = "default-deck";
-
+/**
+ * 주소의 ?project= 를 읽으려면 useSearchParams 가 필요한데,
+ * 그건 Suspense 로 감싸지 않으면 프로덕션 빌드가 실패한다.
+ * (개발 모드에서는 멀쩡해 보여서 놓치기 쉽다 — 팀의 /login 도 같은 방식이다.)
+ */
 export default function ShareSlidePage() {
+  return (
+    <Suspense fallback={null}>
+      <ShareSlideInner />
+    </Suspense>
+  );
+}
+
+function ShareSlideInner() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("project");
+  // 프로젝트가 정해져야 어느 슬라이드를 열지 알 수 있다.
+  const deckId = slideDocId(projectId);
+
   // 아직 확인 중이면 null 이다. 그래서 버튼이 깜빡이지 않는다.
   const [me, setMe] = useState<MyIdentity | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -76,7 +95,7 @@ export default function ShareSlidePage() {
   useEffect(() => {
     let alive = true;
     // documents 에 이 줄이 있어야 편집 상태를 저장할 수 있다.
-    Promise.all([getMyIdentity(), loadDocument(DECK_ID)]).then(([found]) => {
+    Promise.all([getMyIdentity(), loadDocument(deckId, projectId)]).then(([found]) => {
       if (!alive) return;
       setMe(found);
       setIsReady(true);
@@ -84,12 +103,12 @@ export default function ShareSlidePage() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [deckId, projectId]);
 
   const myName = me?.name ?? null;
 
-  const collab = useCollaboration(DECK_ID, isReady);
-  const presence = usePresence(DECK_ID, myName);
+  const collab = useCollaboration(deckId, isReady);
+  const presence = usePresence(deckId, myName);
 
   // 명단에 없는 사람(손님 등)도 접속하면 뒤에 붙여서 보여준다.
   const members = useMemo(() => buildMembers(presence.names), [presence.names]);
@@ -331,6 +350,17 @@ export default function ShareSlidePage() {
   ]);
 
   // --- 그리기 -------------------------------------------------------------
+  /*
+   * 프로젝트를 안 고르고 들어오면 어느 슬라이드를 열어야 할지 알 수 없다.
+   * 프로젝트 화면에서 링크를 타고 오는 게 본래 흐름이지만, 아직 그 링크가
+   * 없어서 여기서 고를 수 있게 한다.
+   */
+  if (!projectId) {
+    return (
+      <ProjectPicker what="슬라이드" hrefFor={(id) => `/shareSlide?project=${id}`} />
+    );
+  }
+
   if (!ydoc || !activeId) {
     return (
       <div className="flex h-screen items-center justify-center bg-white text-sm text-gray-400">
