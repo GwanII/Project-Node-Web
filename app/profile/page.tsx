@@ -98,7 +98,11 @@ async function extractPdfText(blob: Blob): Promise<string> {
   for (let i = 1; i <= pages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((it: { str?: string }) => it.str ?? "").join(" ") + "\n";
+    // items 안에는 글자 조각(TextItem)과 표시용 항목(TextMarkedContent)이 섞여 있어요.
+    // str 을 가진 것만 글자로 취급합니다.
+    text += content.items
+      .map(it => ("str" in it ? it.str : ""))
+      .join(" ") + "\n";
     if (text.length > MAX_CHARS_PER_FILE) break;
   }
   return text.slice(0, MAX_CHARS_PER_FILE);
@@ -1107,7 +1111,6 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
   const doneCnt        = doneTodos.length;
   const pct            = visibleTodos.length > 0 ? Math.round((doneCnt / visibleTodos.length) * 100) : 0;
   const visibleDone    = showAll ? doneTodos : doneTodos.slice(0, 2);
-  const weekTodos      = pendingTodos.filter(t => t.week);
 
   return (
     <div style={{ minHeight: "100vh", background: COLOR.gray50, fontFamily: "'Pretendard','Apple SD Gothic Neo',sans-serif", color: COLOR.gray800 }}>
@@ -1125,6 +1128,7 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ width: 60, height: 60, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: COLOR.point, flexShrink: 0, overflow: "hidden" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <div style={{ flex: 1 }}>
@@ -1325,6 +1329,7 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
           <div style={{ background: COLOR.white, borderRadius: 20, padding: 24, maxWidth: 520, width: "100%", maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 16 }}>
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 14, color: COLOR.point, overflow: "hidden" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <div style={{ flex: 1 }}>
@@ -1399,6 +1404,7 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
                       {geminiResult.images.map(im => (
                         <a key={`${im.url}-${im.name}`} href={im.url} target="_blank" rel="noreferrer"
                            style={{ border: `1px solid ${COLOR.gray200}`, borderRadius: 10, overflow: "hidden", textDecoration: "none", display: "block" }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img src={im.url} alt={im.name} style={{ width: "100%", height: 76, objectFit: "cover", display: "block", background: COLOR.gray100 }} />
                           <p style={{ margin: 0, padding: "5px 7px", fontSize: 10, color: COLOR.gray600, background: COLOR.gray50, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{im.name}</p>
                         </a>
@@ -1454,6 +1460,7 @@ ${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: 18, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 18 }}>
               <div style={{ width: 52, height: 52, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, color: COLOR.point, overflow: "hidden", flexShrink: 0 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
                 {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <button onClick={() => imgInputRef.current?.click()} style={{ background: COLOR.gray100, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer", color: COLOR.gray800 }}>📷 사진 변경</button>
