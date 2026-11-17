@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { supabase } from "@/src/lib/supabase";
-import { renderPromptTemplate } from "@/src/lib/promptTemplate";
 
 // ── 로컬 LLM(Ollama) 설정 ──
 const OLLAMA_URL   = process.env.NEXT_PUBLIC_OLLAMA_URL   ?? "http://localhost:11434/api/generate";
@@ -50,6 +49,28 @@ const IMAGE_EXT    = ["png", "jpg", "jpeg", "gif", "webp"];
 const HANZI = /[\u4e00-\u9fff]/;
 const FALLBACK_TAGS = ["#UIUX", "#디자인시스템", "#협업", "#프로토타입", "#프로젝트관리"];
 
+// 문장 단위로 잘라서 한자가 섞인 문장만 버립니다.
+// (한 문장만 중국어로 나오는 경우가 많아서, 통째로 버리면 아까워요)
+function dropHanziSentences(text: string): string {
+  if (!HANZI.test(text)) return text;
+  const kept = text
+    .split(/(?<=[.!?。？！])/)
+    .map(sent => sent.trim())
+    .filter(sent => sent && !HANZI.test(sent));
+  console.warn("🈲 한자가 섞인 문장을 제거했어요:", text.length, "자 →", kept.join(" ").length, "자");
+  return kept.join(" ").trim();
+}
+
+// 배열에서 한자가 든 항목을 버립니다.
+function dropHanziItems(raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw.map(String).map(t => t.trim()).filter(Boolean) : [];
+  const clean = list.filter(t => !HANZI.test(t));
+  if (clean.length < list.length) {
+    console.warn("🈲 한자가 섞인 항목을 제거했어요:", list.filter(t => HANZI.test(t)));
+  }
+  return clean;
+}
+
 function sanitizeTags(raw: unknown): string[] {
   const list = Array.isArray(raw) ? raw.map(String).map(t => t.trim()).filter(Boolean) : [];
   const clean = list.filter(t => !HANZI.test(t));
@@ -77,8 +98,7 @@ async function extractPdfText(blob: Blob): Promise<string> {
   for (let i = 1; i <= pages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    text += content.items.map((it) => ("str" in it ? (it.str ?? "") : "")).join(" ") + "\n";
-    text += content.items.map((it) => ("str" in it ? (it.str ?? "") : "")).join(" ") + "\n";
+    text += content.items.map((it: { str?: string }) => it.str ?? "").join(" ") + "\n";
     if (text.length > MAX_CHARS_PER_FILE) break;
   }
   return text.slice(0, MAX_CHARS_PER_FILE);
@@ -165,7 +185,7 @@ const PERFORMANCE = [
   { label: "문서 정리", pct: 70 },
 ];
 
-type Todo = { id: string; text: string; done: boolean; week?: string; project?: string; projectPath?: string };
+type Todo = { id: string; text: string; done: boolean; due?: Date | null; week?: WeekTag; project?: string; projectPath?: string };
 
 type ReportImage = { name: string; url: string };
 
@@ -178,6 +198,7 @@ type ReportResult = {
   doneCnt: number;
   pendingCnt: number;
   total: number;
+  scoreDetail?: ScoreDetail;       // 기여도 점수 내역
   images?: ReportImage[];          // 회의록 사진·산출물 썸네일
   evidenceMeetings?: string[];     // 분석에 사용한 회의록 제목
   evidenceFiles?: string[];        // 분석에 사용한 문서 이름
@@ -199,6 +220,67 @@ function thisWeekRange() {
   const sun = new Date(mon);  sun.setDate(mon.getDate() + 6);        sun.setHours(23,59,59,999);
   const label = `이번주(${mon.getMonth()+1}/${mon.getDate()}~${sun.getMonth()+1}/${sun.getDate()})에 할 일`;
   return { start: mon, end: sun, label };
+}
+
+// 마감일이 언제인지에 따라 배지를 다르게 붙입니다.
+type WeekTag = { label: string; tone: "over" | "now" | "soon" | "later" };
+
+function weekTagOf(due: Date | null): WeekTag | undefined {
+  if (!due) return undefined;
+  const { start, end } = thisWeekRange();
+  const md = `${due.getMonth() + 1}/${due.getDate()}`;
+
+  if (due < start) {
+    const days = Math.ceil((start.getTime() - due.getTime()) / 86400000);
+    return { label: `지났어요 · ${md} (${days}일 전)`, tone: "over" };
+  }
+  if (due <= end) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const left = Math.round((due.getTime() - today.getTime()) / 86400000);
+    const when = left <= 0 ? "오늘" : left === 1 ? "내일" : `${left}일 뒤`;
+    return { label: `이번주 · ${md} (${when})`, tone: "now" };
+  }
+  const nextEnd = new Date(end); nextEnd.setDate(end.getDate() + 7);
+  if (due <= nextEnd) return { label: `다음주 · ${md}`, tone: "soon" };
+  return { label: `${md} 마감`, tone: "later" };
+}
+
+// ── 기여도 계산 ───────────────────────────────
+// 할 일 완료율만 쓰면 "할 일 2개 만들고 2개 끝낸 사람"이 100%가 됩니다.
+// 그래서 세 가지를 섞습니다.
+//   할 일 수행 50점 + 산출물 등록 30점 + 회의 참여 20점
+// 산출물·회의는 각각 5개를 만점으로 봅니다(그 이상은 더 안 오름).
+const SCORE_W = { todo: 50, file: 30, meeting: 20 };
+const FULL_FILES    = 5;
+const FULL_MEETINGS = 5;
+
+type ScoreDetail = {
+  todo: number; file: number; meeting: number;
+  doneCnt: number; totalCnt: number; fileCnt: number; meetingCnt: number;
+};
+
+function calcContribution(
+  doneCnt: number, totalCnt: number, fileCnt: number, meetingCnt: number
+): { pct: number; detail: ScoreDetail } {
+  const todoScore    = totalCnt > 0 ? (doneCnt / totalCnt) * SCORE_W.todo : 0;
+  const fileScore    = Math.min(fileCnt / FULL_FILES, 1) * SCORE_W.file;
+  const meetingScore = Math.min(meetingCnt / FULL_MEETINGS, 1) * SCORE_W.meeting;
+
+  return {
+    pct: Math.round(todoScore + fileScore + meetingScore),
+    detail: {
+      todo: Math.round(todoScore),
+      file: Math.round(fileScore),
+      meeting: Math.round(meetingScore),
+      doneCnt, totalCnt, fileCnt, meetingCnt,
+    },
+  };
+}
+
+// 오늘 날짜를 <input type="date"> 가 쓰는 형식으로
+function toDateInput(d: Date) {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function ProgressBar({ pct, color = COLOR.point }: { pct: number; color?: string }) {
@@ -234,6 +316,13 @@ function EditableField({ label, value, onChange }: { label: string; value: strin
   );
 }
 
+const WEEK_TONE: Record<WeekTag["tone"], { fg: string; bg: string }> = {
+  over:  { fg: "#DC2626", bg: "#FEF2F2" },   // 지난 것 — 빨강
+  now:   { fg: COLOR.point, bg: COLOR.mainBg }, // 이번주 — 포인트색
+  soon:  { fg: "#B45309", bg: "#FFFBEB" },   // 다음주 — 주황
+  later: { fg: COLOR.gray600, bg: COLOR.gray100 }, // 그 이후 — 회색
+};
+
 function TodoRow({ todo, onToggle, onDelete }: { todo: Todo; onToggle: () => void; onDelete?: () => void }) {
   const [hover, setHover] = useState(false);
   return (
@@ -243,6 +332,14 @@ function TodoRow({ todo, onToggle, onDelete }: { todo: Todo; onToggle: () => voi
         {todo.done && <span style={{ color: "#fff", fontSize: 12, lineHeight: 1 }}>✓</span>}
       </button>
       <span style={{ fontSize: 14, flex: 1, textDecoration: todo.done ? "line-through" : "none", color: todo.done ? COLOR.gray400 : COLOR.gray800 }}>{todo.text}</span>
+      {todo.week && !todo.done && (
+        <span style={{
+          fontSize: 11, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap",
+          padding: "3px 8px", borderRadius: 6,
+          color:      WEEK_TONE[todo.week.tone].fg,
+          background: WEEK_TONE[todo.week.tone].bg,
+        }}>{todo.week.label}</span>
+      )}
       {todo.project && todo.projectPath && (
         <Link href={todo.projectPath} style={{ fontSize: 11, fontWeight: 600, flexShrink: 0, color: todo.done ? COLOR.gray400 : COLOR.point, background: todo.done ? COLOR.gray100 : COLOR.mainBg, padding: "3px 8px", borderRadius: 6, textDecoration: "none", whiteSpace: "nowrap" }}>
           {todo.project} ›
@@ -261,6 +358,10 @@ function TodoRow({ todo, onToggle, onDelete }: { todo: Todo; onToggle: () => voi
 export default function ProfilePage() {
   const [todos, setTodos]             = useState<Todo[]>([]);
   const [newTodo, setNewTodo]         = useState("");
+  const [newTodoDue, setNewTodoDue]   = useState("");
+  const [newTodoProject, setNewTodoProject] = useState("");   // 할 일을 묶을 프로젝트 id
+  const [todoFilter, setTodoFilter]   = useState("all");     // 목록에 보여줄 프로젝트
+  const [hideDone, setHideDone]       = useState(false);     // 완료 항목 접기
   const [showAll, setShowAll]         = useState(false);
   const [reportHistory, setReportHistory] = useState<ReportRow[]>([]);
   const [showHistory, setShowHistory]     = useState(false);
@@ -281,8 +382,9 @@ export default function ProfilePage() {
   const [profileImg, setProfileImg]   = useState<string | null>(null);
 
   // ── profiles 테이블에서 가져오는 정보 ──
-  const [name, setName]         = useState("권소희");
-  const [nickname, setNickname] = useState("권소희");
+  const [name, setName]         = useState("");
+  const [nickname, setNickname] = useState("");
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [email, setEmail]       = useState("");
   const [userId, setUserId]     = useState("");
   const imgInputRef = useRef<HTMLInputElement>(null);
@@ -296,11 +398,15 @@ export default function ProfilePage() {
   // ── profiles 테이블에서 불러오기 ──
   const fetchProfile = useCallback(async () => {
     const authId = await getAuthId();
-    if (!authId) return;
+    if (!authId) {
+      // 로그인 전이면 계속 "불러오는 중"으로 남지 않도록 여기서 끝냅니다.
+      setProfileLoaded(true);
+      return;
+    }
     const { data } = await supabase.from("profiles").select("*").eq("id", authId).maybeSingle();
     if (data) {
-      setName(data.name ?? "권소희");
-      setNickname(data.nickname ?? data.name ?? "권소희");
+      setName(data.name ?? "");
+      setNickname(data.nickname ?? data.name ?? "");
       setEmail(data.email ?? "");
       setUserId(data.nickname ?? "");
       setKakaoOn(data.kakao_notify ?? true);
@@ -325,6 +431,7 @@ export default function ProfilePage() {
       }));
       setProjectList(list);
       setSelectedProject(prev => (prev.id ? prev : list[0]));
+      setNewTodoProject(prev => (prev ? prev : list[0].id));
     }
 
     // 할 일 목록 불러오기 (todos 테이블)
@@ -337,19 +444,18 @@ export default function ProfilePage() {
     if (todoErr) {
       console.warn("할 일 불러오기 실패:", todoErr.message);
     } else if (todoRows) {
-      const { start, end, label } = thisWeekRange();
       const list: Todo[] = (todoRows as unknown as {
         id: string; text: string; completed: boolean | null; due_at: string | null;
         projectdata?: { project_name?: string } | { project_name?: string }[] | null;
       }[]).map(r => {
         const pj = Array.isArray(r.projectdata) ? r.projectdata[0] : r.projectdata;
         const due = r.due_at ? new Date(r.due_at) : null;
-        const inThisWeek = !!due && due >= start && due <= end;
         return {
           id: String(r.id),
           text: r.text,
           done: !!r.completed,
-          week: inThisWeek ? label : undefined,
+          due,
+          week: weekTagOf(due),
           project: pj?.project_name,
           projectPath: "/mainpage",
         };
@@ -367,6 +473,8 @@ export default function ProfilePage() {
 
     if (reportErr) console.warn("리포트 히스토리 불러오기 실패:", reportErr.message);
     else if (reportRows) setReportHistory(reportRows as unknown as ReportRow[]);
+
+    setProfileLoaded(true);
   }, []);
 
   useEffect(() => { fetchProfile(); }, [fetchProfile]);
@@ -425,24 +533,32 @@ export default function ProfilePage() {
   };
 
   // ── 생성된 리포트를 DB에 저장 ──
-  const saveReport = async (
-    result: ReportResult,
-    meta?: { promptVersion: number | null; durationMs: number; status: string }
-  ) => {
+  const saveReport = async (result: ReportResult) => {
     const authId = await getAuthId();
     if (!authId) return;
     const { data, error } = await supabase.from("ai_reports").insert({
       user_id: authId,
       project_name: selectedProject.name,
       result,
-      prompt_version: meta?.promptVersion ?? null,
-      duration_ms: meta?.durationMs ?? null,
-      status: meta?.status ?? "success",
     }).select("id, project_name, created_at, result").single();
 
     if (error) { console.warn("리포트 저장 실패:", error.message); return; }
     console.log("💾 리포트 저장 완료");
     setReportHistory(prev => [data as unknown as ReportRow, ...prev].slice(0, 10));
+  };
+
+  // ── 저장된 리포트 삭제 ──
+  const deleteReport = async (id: string, projectName: string) => {
+    if (!confirm(`"${projectName}" 리포트를 삭제할까요?\n삭제하면 되돌릴 수 없어요.`)) return;
+
+    const backup = reportHistory;
+    setReportHistory(prev => prev.filter(r => r.id !== id));
+
+    const { error } = await supabase.from("ai_reports").delete().eq("id", id);
+    if (error) {
+      alert("삭제 실패: " + error.message);
+      setReportHistory(backup);
+    }
   };
 
   // ── 리포트를 PDF로 내보내기 (브라우저 인쇄 → PDF로 저장) ──
@@ -493,6 +609,13 @@ export default function ProfilePage() {
   <div class="stat"><b>${r.total}</b><span>전체</span></div>
 </div>
 <div class="summary">${esc(r.summary)}</div>
+${r.scoreDetail ? `
+<h2>기여도 ${r.pct}% 산출 근거</h2>
+<ul class="evi">
+  <li>할 일 수행 — ${r.scoreDetail.todo}/${SCORE_W.todo}점 (${r.scoreDetail.doneCnt}/${r.scoreDetail.totalCnt}개 완료)</li>
+  <li>산출물 등록 — ${r.scoreDetail.file}/${SCORE_W.file}점 (${r.scoreDetail.fileCnt}개 업로드)</li>
+  <li>회의 참여 — ${r.scoreDetail.meeting}/${SCORE_W.meeting}점 (${r.scoreDetail.meetingCnt}개 기록)</li>
+</ul>` : ""}
 <h2>핵심 성과</h2>
 <ul>${r.achievements.map(a => `<li>${esc(a)}</li>`).join("")}</ul>
 <h2>자기소개서 추천 문장</h2>
@@ -531,12 +654,11 @@ ${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && 
   const generateReport = async () => {
     setReportLoading(true);
     setGeminiResult(null);
-    const reportStartedAt = performance.now();
-    let liveVersionForLog: number | null = null;
-    let fallbackEnabledForLog = true;
 
     const localDoneCnt = todos.filter(t => t.done).length;
-    const localPct = todos.length > 0 ? Math.round((localDoneCnt / todos.length) * 100) : 0;
+    // 파일·회의 수를 알아야 제대로 계산되므로, 일단 할 일만으로 잡아두고 아래에서 다시 계산합니다.
+    let localPct = calcContribution(localDoneCnt, todos.length, 0, 0).pct;
+    let scoreDetail = calcContribution(localDoneCnt, todos.length, 0, 0).detail;
 
     try {
       const authId = await getAuthId();
@@ -652,6 +774,19 @@ ${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && 
         );
       }
 
+      // 파일 수·회의 수까지 반영해 기여도 다시 계산
+      {
+        const scored = calcContribution(
+          localDoneCnt, todos.length, allFiles.length, targetMeetings.length
+        );
+        localPct    = scored.pct;
+        scoreDetail = scored.detail;
+        console.log(
+          `📊 기여도 ${scored.pct}% = 할일 ${scored.detail.todo} + 산출물 ${scored.detail.file} + 회의 ${scored.detail.meeting}` +
+          ` (할일 ${localDoneCnt}/${todos.length}, 파일 ${allFiles.length}개, 회의 ${targetMeetings.length}개)`
+        );
+      }
+
       // 제목으로 회의록 / 문서 구분
       const isMeetingDoc = (n?: string) => /회의|미팅|논의|스크럼|회고/.test(n ?? "");
       const titleOf = (m: MeetingRow) => String(m.name ?? "").trim();
@@ -660,60 +795,8 @@ ${((r.evidenceMeetings && r.evidenceMeetings.length > 0) || (r.evidenceFiles && 
       );
       const projectList = (projectData ?? []).map((p: {project_name: string; start_date: string; end_date: string}) => `${p.project_name}(${p.start_date}~${p.end_date})`);
 
-      // 2. 배포된 프롬프트 버전 조회 (실패하면 기존 하드코딩 프롬프트로 대체)
-      let livePrompt: {
-        version: number;
-        content: string;
-        model: string;
-        temperature: number;
-        fallbackEnabled: boolean;
-      } | null = null;
-      try {
-        const { data: liveRow } = await supabase
-          .from("prompt_versions")
-          .select("version, content, model, temperature, fallback_enabled")
-          .eq("key", "cover_letter")
-          .eq("is_live", true)
-          .maybeSingle();
-        if (liveRow) {
-          livePrompt = {
-            version: liveRow.version,
-            content: liveRow.content,
-            model: liveRow.model,
-            temperature: liveRow.temperature,
-            fallbackEnabled: liveRow.fallback_enabled,
-          };
-          liveVersionForLog = liveRow.version;
-          fallbackEnabledForLog = liveRow.fallback_enabled;
-        }
-      } catch (e) {
-        console.warn("배포된 프롬프트 조회 실패, 기본 프롬프트를 사용합니다:", e);
-      }
-
-      // 참고 자료(참여 프로젝트 / 진행 중인 할일 / 산출물 / 산출물 내용 / 회의 기록)를
-      // {{documents}} 변수 하나로 묶는다. DB에 저장된 템플릿이 이 블록을 그대로 쓴다.
-      const documentsBlock = [
-        projectList.length > 0 ? `[참여 프로젝트]\n${projectList.join("\n")}` : "",
-        pendingTodoList.length > 0 ? `[진행 중인 할일]\n${pendingTodoList.join("\n")}` : "",
-        fileList.length > 0 ? `[제작·업로드한 산출물]\n${fileList.join("\n")}` : "",
-        fileContents.length > 0 ? `[산출물 내용]\n${fileContents.join("\n\n")}` : "",
-        meetingList.length > 0 ? `[참여한 회의 기록]\n${meetingList.join("\n\n")}` : "",
-      ].filter(Boolean).join("\n\n") || "참고 자료 없음";
-
-      const promptModel = livePrompt?.model ?? OLLAMA_MODEL;
-      const promptTemperature = livePrompt?.temperature ?? 0.85;
-
-      const prompt = livePrompt
-        ? renderPromptTemplate(livePrompt.content, {
-            nickname: profileData?.nickname ?? nickname,
-            role: "UI 디자인",
-            project_name: selectedProject.name,
-            period: selectedProject.period,
-            done_todos: doneTodoList.length > 0 ? doneTodoList.join("\n") : "없음",
-            documents: documentsBlock,
-            contribution: String(localPct),
-          })
-        : `당신은 취업 컨설턴트입니다. 대학생의 팀 프로젝트 기록을 분석해 자기소개서에 바로 쓸 수 있는 문장을 작성합니다.
+      // 2. 프롬프트 구성
+      const prompt = `당신은 취업 컨설턴트입니다. 대학생의 팀 프로젝트 기록을 분석해 자기소개서에 바로 쓸 수 있는 문장을 작성합니다.
 
 [학생 정보]
 - 이름: ${profileData?.nickname ?? nickname}
@@ -808,12 +891,12 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: promptModel,
+            model: OLLAMA_MODEL,
             prompt: p,
             stream: false,
             format: "json",
             options: {
-              temperature: promptTemperature,      // 배포된 버전 설정 (없으면 0.85)
+              temperature: 0.85,      // 표현을 다양하게
               top_p: 0.92,
               repeat_penalty: 1.15,   // 같은 말 반복 억제
               num_predict: 3000,
@@ -831,8 +914,11 @@ ${meetingList.length > 0 ? meetingList.join("\n\n") : "없음"}
       console.log("LLM 1차 응답:", parsed);
 
       // coverLetter가 배열로 오면 한 문단으로 합치기
-      const joinLetter = (v: unknown): string =>
-        Array.isArray(v) ? v.map(String).map(x => x.trim()).filter(Boolean).join(" ") : String(v ?? "");
+      const joinLetter = (v: unknown): string => {
+        // 배열이면 한자 든 문장을 통째로 버리고, 문자열이면 문장 단위로 걸러냅니다.
+        if (Array.isArray(v)) return dropHanziItems(v).join(" ");
+        return dropHanziSentences(String(v ?? "")).trim();
+      };
 
       let coverLetter = joinLetter(parsed.coverLetter);
       console.log(`✍️ 자소서 1차 길이: ${coverLetter.length}자`);
@@ -857,6 +943,8 @@ ${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 2500) : "없음"}
 - 새로운 사실을 지어내지 말고, 초안과 위 근거에 있는 내용만 풀어 쓰세요.
 - 각 문장 안에 "무엇을 / 왜 / 어떻게 / 그 결과"를 모두 넣고, 쉼표로 절을 2~3개 연결해 길게 쓰세요.
 - 모든 문장은 "~했습니다" 체로 통일하세요.
+- 반드시 한국어로만 쓰세요. 중국어 한자(这些, 问题, 团队 등)를 단 한 글자도 쓰지 마세요.
+  기술 이름(Figma, Supabase, Whisper API)만 원문 그대로 쓸 수 있습니다.
 
 아래 JSON만 출력하세요.
 { "coverLetter": ["문장1", "문장2", "문장3", "문장4"] }`;
@@ -870,7 +958,7 @@ ${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 2500) : "없음"}
       }
 
       // 핵심 성과가 3개가 아니면 다시 요청 (모델이 1~2개만 내놓을 때가 있어요)
-      let achievements: string[] = Array.isArray(parsed.achievements) ? parsed.achievements.map(String) : [];
+      let achievements = dropHanziItems(parsed.achievements);
       console.log(`🏅 핵심 성과 1차: ${achievements.length}개`);
 
       if (achievements.length < 3) {
@@ -885,7 +973,7 @@ ${meetingList.length > 0 ? meetingList.join("\n\n").slice(0, 3000) : "없음"}
 ${fileContents.length > 0 ? fileContents.join("\n\n").slice(0, 2500) : "없음"}
 
 [이미 작성된 성과 ${achievements.length}개 — 이것과 겹치지 않게 쓰세요]
-${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}. ${a}`).join("\n") : "없음"}
+${achievements.length > 0 ? achievements.map((a, i) => `${i + 1}. ${a}`).join("\n") : "없음"}
 
 === 할 일 ===
 핵심 성과를 **정확히 3개** 작성하세요. 2개도 4개도 안 됩니다.
@@ -899,22 +987,24 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
 아래 JSON만 출력하세요.
 { "achievements": ["성과1", "성과2", "성과3"] }`;
           const fixed = await callLLM(fixPrompt);
-          const got = Array.isArray(fixed.achievements) ? fixed.achievements.map(String) : [];
+          const got = dropHanziItems(fixed.achievements);
           console.log(`🏅 핵심 성과 2차: ${got.length}개`);
           if (got.length >= achievements.length) achievements = got;
         } catch (e) {
           console.warn("성과 재요청 실패, 1차 결과를 사용합니다:", e);
         }
       }
-      achievements = achievements.filter((a: string) => a.trim()).slice(0, 3);
+      achievements = achievements.filter(a => a.trim()).slice(0, 3);
 
       const result: ReportResult = {
-        summary: String(parsed.summary ?? ""),
+        summary: dropHanziSentences(String(parsed.summary ?? "")).trim()
+                 || `${selectedProject.name} 프로젝트 성과 리포트`,
         achievements,
         tags: sanitizeTags(parsed.tags),
         coverLetter,
         pct: localPct, doneCnt: localDoneCnt,
         pendingCnt: todos.filter(t => !t.done).length, total: todos.length,
+        scoreDetail,
         images: reportImages,
         evidenceMeetings: targetMeetings.filter(m => isMeetingDoc(titleOf(m))).map(titleOf),
         evidenceFiles: Array.from(new Set([
@@ -923,47 +1013,11 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
         ])),
       };
       setGeminiResult(result);
-      await saveReport(result, {
-        promptVersion: livePrompt?.version ?? null,
-        durationMs: Math.round(performance.now() - reportStartedAt),
-        status: "success",
-      });
+      await saveReport(result);
 
     } catch (err: unknown) {
       console.error("LLM 오류:", err);
-      const failDurationMs = Math.round(performance.now() - reportStartedAt);
-      const failStatus = err instanceof SyntaxError ? "parse_error" : "timeout";
-
-      if (!fallbackEnabledForLog) {
-        // 관리자가 '실패 시 예시 데이터 대체'를 꺼둔 경우: 예시 데이터를 보여주지 않고
-        // 실패 사실만 로그에 남긴다. 화면은 기존 '다시 시도하기' 버튼으로 안내된다.
-        const authId = await getAuthId();
-        if (authId) {
-          await supabase.from("ai_reports").insert({
-            user_id: authId,
-            project_name: selectedProject.name,
-            result: { error: true, message: String(err) },
-            prompt_version: liveVersionForLog,
-            duration_ms: failDurationMs,
-            status: failStatus,
-          });
-        }
-        setReportLoading(false);
-        return;
-      }
-
-      // API 실패 시 예시 데이터로 대체 (fallback 로그도 함께 남긴다)
-      const authIdForFallback = await getAuthId();
-      if (authIdForFallback) {
-        await supabase.from("ai_reports").insert({
-          user_id: authIdForFallback,
-          project_name: selectedProject.name,
-          result: { fallback: true },
-          prompt_version: liveVersionForLog,
-          duration_ms: failDurationMs,
-          status: "fallback",
-        });
-      }
+      // API 실패 시 예시 데이터로 대체
       setGeminiResult({
         summary: `${selectedProject.name} UI 디자인 총괄 · 기여도 ${localPct}%`,
         achievements: [
@@ -999,25 +1053,33 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
     const authId = await getAuthId();
     if (!authId) { alert("로그인이 필요해요."); return; }
 
-    // todos.due_at 은 NOT NULL 이라 반드시 넣어야 해요. 기본값은 이번 주 일요일 밤.
+    // todos.due_at 은 NOT NULL 이라 반드시 넣어야 해요.
+    // 날짜를 고르지 않았으면 이번 주 일요일 밤으로.
+    const dueDate = newTodoDue
+      ? new Date(`${newTodoDue}T23:59:59`)
+      : thisWeekRange().end;
+
     const payload: Record<string, unknown> = {
       user_id: authId,
       text,
       completed: false,
-      due_at: thisWeekRange().end.toISOString(),
+      due_at: dueDate.toISOString(),
     };
-    if (selectedProject.id) payload.project_id = selectedProject.id;
+    const pjId = newTodoProject || selectedProject.id;
+    if (pjId) payload.project_id = pjId;
 
     const { data, error } = await supabase.from("todos").insert(payload).select("id").single();
     if (error) { alert("할 일 추가 실패: " + error.message); return; }
 
     setTodos(prev => [...prev, {
       id: String(data.id), text, done: false,
-      week: thisWeekRange().label,
-      project: selectedProject.id ? selectedProject.name : undefined,
-      projectPath: selectedProject.id ? "/mainpage" : undefined,
-    }]);
+      due: dueDate,
+      week: weekTagOf(dueDate),
+      project: pjId ? (projectList.find(p => p.id === pjId)?.name ?? selectedProject.name) : undefined,
+      projectPath: pjId ? "/mainpage" : undefined,
+    }].sort((a, b) => (a.due?.getTime() ?? 0) - (b.due?.getTime() ?? 0)));
     setNewTodo("");
+    setNewTodoDue("");
   };
 
   const deleteTodo = async (id: string) => {
@@ -1028,10 +1090,22 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
     if (error) { alert("삭제 실패: " + error.message); setTodos(backup); }
   };
 
-  const pendingTodos   = todos.filter(t => !t.done);
-  const doneTodos      = todos.filter(t => t.done);
+  // 아직 못 불러왔으면 남의 이름이 비치지 않도록 중립적인 글자를 씁니다.
+  const displayName  = nickname || name || (profileLoaded ? "이름 없음" : "불러오는 중…");
+  const avatarText   = (nickname || name || "·").slice(0, 2);
+
+  // 보기 필터 — 데이터는 그대로 두고 화면에서만 걸러냅니다.
+  const visibleTodos = todos.filter(t => {
+    if (todoFilter === "all")  return true;
+    if (todoFilter === "none") return !t.project;
+    return t.project === projectList.find(p => p.id === todoFilter)?.name;
+  });
+
+  const pendingTodos   = visibleTodos.filter(t => !t.done);
+  const overdueCnt     = pendingTodos.filter(t => t.week?.tone === "over").length;
+  const doneTodos      = visibleTodos.filter(t => t.done);
   const doneCnt        = doneTodos.length;
-  const pct            = todos.length > 0 ? Math.round((doneCnt / todos.length) * 100) : 0;
+  const pct            = visibleTodos.length > 0 ? Math.round((doneCnt / visibleTodos.length) * 100) : 0;
   const visibleDone    = showAll ? doneTodos : doneTodos.slice(0, 2);
   const weekTodos      = pendingTodos.filter(t => t.week);
 
@@ -1051,10 +1125,10 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
           <Card>
             <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
               <div style={{ width: 60, height: 60, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: COLOR.point, flexShrink: 0, overflow: "hidden" }}>
-                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : nickname.slice(0, 2)}
+                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <div style={{ flex: 1 }}>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 18 }}>{nickname}</p>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 18, color: profileLoaded ? COLOR.gray800 : COLOR.gray400 }}>{displayName}</p>
                 <p style={{ margin: "2px 0 2px", fontSize: 13, color: COLOR.gray400 }}>{name}</p>
                 <Link href="/mainpage" style={{ fontSize: 13, color: COLOR.point, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}>
                   참여 중인 프로젝트 {projectList.length}개 <span style={{ fontSize: 12 }}>›</span>
@@ -1068,7 +1142,7 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
               <span style={{ fontSize: 15, fontWeight: 600 }}>진행상황</span>
-              <span style={{ fontSize: 13, color: COLOR.gray600 }}>할 일 {doneCnt}/{todos.length}</span>
+              <span style={{ fontSize: 13, color: COLOR.gray600 }}>할 일 {doneCnt}/{visibleTodos.length}</span>
             </div>
             <ProgressBar pct={pct} />
             <p style={{ margin: "10px 0 0", fontSize: 28, fontWeight: 700, color: COLOR.point, textAlign: "right" }}>{pct}%</p>
@@ -1077,10 +1151,12 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
           {/* 할일 */}
           <Card>
             <p style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 600 }}>내 할일(To-Do)</p>
-            <p style={{ margin: "0 0 12px", fontSize: 12, color: COLOR.point, fontWeight: 600, background: COLOR.mainBg, display: "inline-block", padding: "4px 12px", borderRadius: 6 }}>
-              📅 {thisWeekRange().label}
-            </p>
-            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            {overdueCnt > 0 && (
+              <p style={{ margin: "0 0 12px", fontSize: 12, color: "#DC2626", fontWeight: 600, background: "#FEF2F2", display: "inline-block", padding: "4px 12px", borderRadius: 6 }}>
+                ⚠️ 마감이 지난 할 일 {overdueCnt}개
+              </p>
+            )}
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <input
                 value={newTodo}
                 onChange={e => setNewTodo(e.target.value)}
@@ -1093,6 +1169,61 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
                          borderRadius: 8, padding: "0 16px", fontSize: 13, fontWeight: 600,
                          cursor: newTodo.trim() ? "pointer" : "default" }}>추가</button>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+              <span style={{ fontSize: 12, color: COLOR.gray400 }}>마감일</span>
+              <input
+                type="date"
+                value={newTodoDue}
+                min={toDateInput(new Date())}
+                onChange={e => setNewTodoDue(e.target.value)}
+                style={{ border: `1px solid ${COLOR.gray200}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, outline: "none", color: COLOR.gray800 }}
+              />
+              {newTodoDue
+                ? <button onClick={() => setNewTodoDue("")} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: COLOR.gray400, padding: 0 }}>지우기</button>
+                : <span style={{ fontSize: 11, color: COLOR.gray400 }}>비워두면 이번 주 일요일</span>}
+
+              <span style={{ fontSize: 12, color: COLOR.gray400, marginLeft: 10 }}>프로젝트</span>
+              <select
+                value={newTodoProject}
+                onChange={e => setNewTodoProject(e.target.value)}
+                style={{ border: `1px solid ${COLOR.gray200}`, borderRadius: 8, padding: "6px 10px", fontSize: 12, outline: "none", color: COLOR.gray800, background: COLOR.white, cursor: "pointer", maxWidth: 180 }}
+              >
+                <option value="">프로젝트 없음</option>
+                {projectList.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, paddingTop: 10, borderTop: `1px solid ${COLOR.gray100}` }}>
+              <span style={{ fontSize: 12, color: COLOR.gray400 }}>보기</span>
+              <select
+                value={todoFilter}
+                onChange={e => setTodoFilter(e.target.value)}
+                style={{ border: `1px solid ${COLOR.gray200}`, borderRadius: 8, padding: "5px 10px", fontSize: 12, outline: "none", color: COLOR.gray800, background: COLOR.white, cursor: "pointer", maxWidth: 170 }}
+              >
+                <option value="all">전체 프로젝트</option>
+                {projectList.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <option value="none">프로젝트 없음</option>
+              </select>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: COLOR.gray600, cursor: "pointer", marginLeft: 4 }}>
+                <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)}
+                  style={{ width: 14, height: 14, cursor: "pointer", accentColor: COLOR.point }} />
+                완료 숨기기
+              </label>
+
+              {todos.length !== visibleTodos.length && (
+                <span style={{ fontSize: 11, color: COLOR.gray400, marginLeft: "auto" }}>
+                  다른 프로젝트 {todos.length - visibleTodos.length}개 숨김
+                </span>
+              )}
+            </div>
+
+            {visibleTodos.length === 0 && todos.length > 0 && (
+              <p style={{ margin: "4px 0 0", fontSize: 13, color: COLOR.gray400 }}>
+                이 조건에 맞는 할 일이 없어요. 보기를 &quot;전체 프로젝트&quot;로 바꿔보세요.
+              </p>
+            )}
             {todos.length === 0 && (
               <p style={{ margin: "4px 0 0", fontSize: 13, color: COLOR.gray400 }}>
                 등록된 할 일이 없어요. 위에 입력해서 첫 할 일을 만들어보세요.
@@ -1105,7 +1236,13 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
                 </div>
               </div>
             )}
-            {doneTodos.length > 0 && (
+            {doneTodos.length > 0 && hideDone && (
+              <button onClick={() => setHideDone(false)}
+                style={{ background: "none", border: "none", color: COLOR.gray400, fontSize: 12, cursor: "pointer", padding: 0 }}>
+                ✓ 완료 {doneTodos.length}개 숨김 — 보기
+              </button>
+            )}
+            {doneTodos.length > 0 && !hideDone && (
               <div>
                 <p style={{ margin: "0 0 10px", fontSize: 12, color: COLOR.gray400, fontWeight: 600 }}>✓ 완료</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1170,6 +1307,8 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
                           style={{ flexShrink: 0, background: COLOR.mainBg, color: COLOR.point, border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>보기</button>
                         <button onClick={() => exportReportPdf(r.result, r.project_name, "")}
                           style={{ flexShrink: 0, background: COLOR.gray100, color: COLOR.gray600, border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, cursor: "pointer" }}>PDF</button>
+                        <button onClick={() => deleteReport(r.id, r.project_name)} title="삭제"
+                          style={{ flexShrink: 0, background: "transparent", color: COLOR.gray400, border: "none", borderRadius: 6, width: 26, height: 26, fontSize: 14, lineHeight: 1, cursor: "pointer" }}>×</button>
                       </div>
                     ))}
                   </div>
@@ -1186,10 +1325,10 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
           <div style={{ background: COLOR.white, borderRadius: 20, padding: 24, maxWidth: 520, width: "100%", maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 16 }}>
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, fontSize: 14, color: COLOR.point, overflow: "hidden" }}>
-                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : nickname.slice(0, 2)}
+                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <div style={{ flex: 1 }}>
-                <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{nickname} · UI 디자인 파트</p>
+                <p style={{ margin: 0, fontWeight: 600, fontSize: 15 }}>{displayName}</p>
                 <p style={{ margin: "2px 0 0", fontSize: 12, color: COLOR.gray600 }}>{selectedProject.name} · {selectedProject.period}</p>
               </div>
               <span style={{ fontSize: 12, color: COLOR.point, background: COLOR.mainBg, padding: "4px 10px", borderRadius: 6 }}>✦ AI 생성</span>
@@ -1213,6 +1352,30 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
                     </div>
                   ))}
                 </div>
+                {geminiResult.scoreDetail && (
+                  <div style={{ background: COLOR.gray50, borderRadius: 12, padding: 14, marginBottom: 14 }}>
+                    <p style={{ margin: "0 0 10px", fontSize: 12, fontWeight: 600, color: COLOR.gray800 }}>
+                      기여도 {geminiResult.pct}% 산출 근거
+                    </p>
+                    <div style={{ display: "flex", height: 10, borderRadius: 999, overflow: "hidden", background: COLOR.gray200, marginBottom: 10 }}>
+                      <div style={{ width: `${geminiResult.scoreDetail.todo}%`,    background: COLOR.point }} />
+                      <div style={{ width: `${geminiResult.scoreDetail.file}%`,    background: "#A5B4FC" }} />
+                      <div style={{ width: `${geminiResult.scoreDetail.meeting}%`, background: "#C7D2FE" }} />
+                    </div>
+                    {([
+                      ["할 일 수행", geminiResult.scoreDetail.todo, SCORE_W.todo, `${geminiResult.scoreDetail.doneCnt}/${geminiResult.scoreDetail.totalCnt}개 완료`, COLOR.point],
+                      ["산출물 등록", geminiResult.scoreDetail.file, SCORE_W.file, `${geminiResult.scoreDetail.fileCnt}개 업로드`, "#A5B4FC"],
+                      ["회의 참여",   geminiResult.scoreDetail.meeting, SCORE_W.meeting, `${geminiResult.scoreDetail.meetingCnt}개 기록`, "#C7D2FE"],
+                    ] as [string, number, number, string, string][]).map(([label, got, max, note, color]) => (
+                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: COLOR.gray800, width: 70 }}>{label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: COLOR.gray800 }}>{got}/{max}점</span>
+                        <span style={{ fontSize: 11, color: COLOR.gray400, marginLeft: "auto" }}>{note}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div style={{ background: COLOR.gray50, borderRadius: 12, padding: 14, marginBottom: 14, textAlign: "center" }}>
                   <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: COLOR.point }}>✦ {geminiResult.summary}</p>
                 </div>
@@ -1291,7 +1454,7 @@ ${achievements.length > 0 ? achievements.map((a: string, i: number) => `${i + 1}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: 18, borderBottom: `1px solid ${COLOR.gray200}`, marginBottom: 18 }}>
               <div style={{ width: 52, height: 52, borderRadius: "50%", background: COLOR.mainBg, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 600, color: COLOR.point, overflow: "hidden", flexShrink: 0 }}>
-                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : nickname.slice(0, 2)}
+                {profileImg ? <img src={profileImg} alt="프로필" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : avatarText}
               </div>
               <button onClick={() => imgInputRef.current?.click()} style={{ background: COLOR.gray100, border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, cursor: "pointer", color: COLOR.gray800 }}>📷 사진 변경</button>
               <input ref={imgInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleProfileImg} />
