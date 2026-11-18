@@ -6,9 +6,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "@/src/lib/supabase";
 
+const REMEMBERED_EMAIL_KEY = "cobalthub_remembered_email";
+
 function LoginPageInner() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberEmail, setRememberEmail] = useState(false);
 
   // 비밀번호 표시 여부
   const [showPassword, setShowPassword] = useState(false);
@@ -29,6 +32,31 @@ function LoginPageInner() {
 
   const isLoginDisabled =
     loading || email.trim() === "" || password.trim() === "";
+
+  // 이전에 저장한 이메일 불러오기 (브라우저에서만 실행)
+  useEffect(() => {
+    try {
+      const savedEmail = window.localStorage.getItem(REMEMBERED_EMAIL_KEY);
+      if (savedEmail) {
+        setEmail(savedEmail);
+        setRememberEmail(true);
+      }
+    } catch (error) {
+      console.warn("저장된 이메일을 불러오지 못했습니다:", error);
+    }
+  }, []);
+
+  // 체크 해제하면 저장된 이메일을 즉시 삭제
+  const handleRememberEmailChange = (checked: boolean) => {
+    setRememberEmail(checked);
+    if (!checked) {
+      try {
+        window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+      } catch (error) {
+        console.warn("저장된 이메일을 삭제하지 못했습니다:", error);
+      }
+    }
+  };
 
   // 휴대폰 번호 자동 하이픈
   const formatPhoneNumber = (value: string) => {
@@ -102,59 +130,96 @@ function LoginPageInner() {
   };
 
   // 이메일 + 비밀번호 로그인
+
+  // 이메일 + 비밀번호 로그인
   const handleLogin = async () => {
     if (isLoginDisabled) return;
 
     setLoading(true);
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { data, error } =
+        await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-    if (error) {
-      setLoading(false);
+      if (error) {
+        console.error("Supabase 로그인 오류:", {
+          message: error.message,
+          code: error.code,
+          status: error.status,
+        });
 
-      if (error.code === "invalid_credentials") {
-        alert("이메일 또는 비밀번호가 올바르지 않습니다.");
-      } else if (error.code === "email_not_confirmed") {
-        alert("이메일 인증을 완료해주세요.");
-      } else if (error.code === "over_request_rate_limit") {
-        alert("로그인 요청이 너무 많습니다. 잠시 후 다시 시도해주세요.");
-      } else {
-        alert("로그인 중 오류가 발생했습니다.");
+        if (error.code === "invalid_credentials") {
+          alert("이메일 또는 비밀번호가 올바르지 않습니다.");
+        } else if (error.code === "email_not_confirmed") {
+          alert("이메일 인증을 완료해주세요.");
+        } else if (
+          error.code === "over_request_rate_limit"
+        ) {
+          alert(
+            "로그인 요청이 너무 많습니다. 잠시 후 다시 시도해주세요."
+          );
+        } else {
+          alert("로그인 중 오류가 발생했습니다.");
+        }
+
+        return;
       }
 
-      console.log("로그인 에러:", error);
-      return;
-    }
+      if (!data.user) {
+        alert("로그인 사용자 정보를 확인할 수 없습니다.");
+        return;
+      }
 
-    console.log("로그인 성공:", data);
+      // 로그인 성공 시 체크 상태에 따라 이메일만 저장 (비밀번호는 저장하지 않음)
+      try {
+        if (rememberEmail) {
+          window.localStorage.setItem(REMEMBERED_EMAIL_KEY, email.trim());
+        } else {
+          window.localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+        }
+      } catch (storageError) {
+        // 저장소 접근이 차단되어도 로그인은 정상적으로 계속 진행
+        console.warn("이메일 기억하기 저장 실패:", storageError);
+      }
 
-    // 정지된 계정인지 확인
-    const { data: profileRow } = await supabase
-      .from("profiles")
-      .select("is_suspended")
-      .eq("id", data.user.id)
-      .maybeSingle();
+      // 로그인 이력 저장 실패가 실제 로그인 성공을 방해하지 않도록 분리
+      if (data.session?.access_token) {
+        try {
+          const response = await fetch("/api/login-history", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${data.session.access_token}`,
+            },
+          });
+          if (!response.ok) {
+            console.warn("로그인 기록 저장 실패:", response.status);
+          }
+        } catch (historyError) {
+          console.warn("로그인 기록 API 호출 실패:", historyError);
+        }
+      }
 
-    if (profileRow?.is_suspended) {
-      await supabase.auth.signOut();
+      console.log("로그인 성공:", data);
+
+      // 이미 휴대폰 인증이 완료된 사용자
+      if (data.user.phone) {
+        router.push("/mainpage");
+        return;
+      }
+
+      // 휴대폰 인증이 안 된 사용자
+      setShowPhoneVerification(true);
+    } catch (error) {
+      console.error("로그인 요청 중 예외 발생:", error);
+      alert("로그인 중 오류가 발생했습니다. 다시 시도해주세요.");
+    } finally {
       setLoading(false);
-      alert("정지된 계정입니다. 관리자에게 문의해주세요.");
-      return;
     }
-
-    // 이미 휴대폰 인증이 완료된 사용자
-    if (data.user.phone) {
-      router.push("/mainpage");
-      return;
-    }
-
-    // 휴대폰 인증이 안 된 사용자
-    setLoading(false);
-    setShowPhoneVerification(true);
   };
+
 
   // 휴대폰 OTP 전송
   const handleSendOtp = async () => {
@@ -299,8 +364,19 @@ function LoginPageInner() {
                 </div>
               </div>
 
+              {/* 이메일 기억하기 */}
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={rememberEmail}
+                  onChange={(e) => handleRememberEmailChange(e.target.checked)}
+                  className="h-4 w-4 cursor-pointer accent-blue-600"
+                />
+                이메일 기억하기
+              </label>
+
               {/* 버튼 영역 */}
-              <div className="mt-10">
+              <div className="mt-7">
                 <button
                   type="button"
                   onClick={handleLogin}
